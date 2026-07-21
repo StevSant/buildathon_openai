@@ -146,7 +146,13 @@ export default function ReportForm() {
 
       router.push("/");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No pudimos publicar el reporte");
+      const code = (reason as { code?: string })?.code;
+      const message = reason instanceof Error ? reason.message : "";
+      setError(
+        code === "42501" || /row-level security/i.test(message)
+          ? "Tu cuenta está deshabilitada por reportes falsos y no puede publicar nuevos reportes."
+          : message || "No pudimos publicar el reporte",
+      );
       setPhase("ready");
     }
   }
@@ -303,6 +309,10 @@ export default function ReportForm() {
       >
         {phase === "publishing" ? "Publicando…" : "Publicar incidente"}
       </button>
+      <p className="mb-0 mt-2 text-[11px] leading-relaxed text-faint">
+        🔒 Tu reporte es anónimo: otros usuarios nunca ven tu nombre ni tus datos. Tu identidad
+        verificada solo se usa para evitar reportes falsos.
+      </p>
     </div>
   );
 }
