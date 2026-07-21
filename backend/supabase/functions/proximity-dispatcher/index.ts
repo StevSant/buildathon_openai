@@ -9,27 +9,19 @@ import { getEnv } from "../_shared/env.ts";
 import { createServiceClient } from "../_shared/service-client.ts";
 import { createUserClient } from "../_shared/supabase-client.ts";
 
-// Composition root for proximity alerts. Two entry points:
-//   1. incident insert (DB trigger / Supabase webhook) → alert nearby users' contacts
-//      (matched via the get_alert_matches RPC in migration 0002)
-//   2. manual SOS from the app → alert the caller's own accepted contacts immediately
-// Sends run through the MessagingGateway port → HermesWhatsAppGateway adapter. Uses the
-// service role because it reads/writes across users.
-//
-// TODO (deploy): wire the incident-insert trigger/webhook from migration 0002 to POST here.
+// Composition root for proximity alerts, SOS, and emergency-contact opt-in.
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const env = getEnv();
-    if (!env.hermesApiUrl || !env.hermesApiKey || !env.hermesFrom) {
-      throw new Error("HERMES_* no configurado");
+    if (!env.hermesWebhookUrl || !env.hermesWebhookSecret || !env.proximityWebhookSecret) {
+      throw new Error("HERMES_WEBHOOK_* no configurado");
     }
 
     const service = createServiceClient();
     const messaging = new HermesWhatsAppGateway({
-      apiUrl: env.hermesApiUrl,
-      apiKey: env.hermesApiKey,
-      from: env.hermesFrom,
+      webhookUrl: env.hermesWebhookUrl,
+      secret: env.hermesWebhookSecret,
     });
     const incidents = new SupabaseIncidentRepository(service);
     const profiles = new SupabaseProfileRepository(service, {
@@ -38,35 +30,52 @@ Deno.serve(async (req) => {
 
     const dispatch = makeDispatchProximityAlerts({ incidents, profiles, messaging });
 
-    const body = await req.json().catch(() => ({}));
+    const body = (await req.json().catch(() => ({}))) as {
+      incidentId?: string;
+      record?: { id?: string };
+      type?: string;
+      location?: { lat?: number; lng?: number };
+      optin?: { contactId?: string };
+    };
 
-    let result: { sent: number };
-    if (body.type === "sos") {
-      // Manual SOS (CONTRACT §4: { type: 'sos', location: { lat, lng } }): identify the
-      // owner from their JWT (this function has verify_jwt = false, so the app still
-      // sends the Authorization header for SOS calls).
+    if (body.optin?.contactId) {
       const { data } = await createUserClient(req).auth.getUser();
       const ownerId = data.user?.id;
       if (!ownerId) throw new Error("unauthorized");
-      result = await dispatch({
-        kind: "sos",
-        userId: ownerId,
-        template: env.whatsappSosTemplate,
-        params: body.location,
-      });
-    } else {
-      // Incident insert: a Supabase DB webhook sends { record: { id } }; a manual/trigger
-      // call may send { incidentId }.
-      const incidentId = body.incidentId ?? body.record?.id;
-      if (!incidentId) throw new Error("incidentId requerido");
-      result = await dispatch({
-        kind: "proximity",
-        incidentId,
-        template: env.whatsappProximityTemplate,
-      });
+      const { data: contact, error } = await service
+        .from("emergency_contacts")
+        .select("id, phone_e164")
+        .eq("id", body.optin.contactId)
+        .eq("owner_id", ownerId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!contact) throw new Error("contacto no encontrado");
+
+      const sent = await messaging.sendWhatsApp({ to: contact.phone_e164, kind: "optin" });
+      await logDispatches(service, null, [{ contactId: contact.id, status: sent.status }]);
+      return Response.json({ dispatched: 1 }, { headers: corsHeaders });
     }
 
-    // CONTRACT §4: the function responds { dispatched: number }.
+    if (body.type === "sos" && body.location) {
+      const { data } = await createUserClient(req).auth.getUser();
+      const ownerId = data.user?.id;
+      if (!ownerId) throw new Error("unauthorized");
+      const result = await dispatch({
+        kind: "sos",
+        userId: ownerId,
+        // Do not put exact coordinates into a WhatsApp/LLM webhook payload.
+      });
+      await logDispatches(service, null, result.results);
+      return Response.json({ dispatched: result.sent }, { headers: corsHeaders });
+    }
+
+    const incidentId = body.incidentId ?? body.record?.id;
+    if (!incidentId) throw new Error("incidentId requerido");
+    if (req.headers.get("x-pulso-webhook-secret") !== env.proximityWebhookSecret) {
+      throw new Error("unauthorized");
+    }
+    const result = await dispatch({ kind: "proximity", incidentId, context: { incidentId } });
+    await logDispatches(service, incidentId, result.results);
     return Response.json({ dispatched: result.sent }, { headers: corsHeaders });
   } catch (err) {
     // CONTRACT §4: non-2xx responses always use the { error } envelope.
@@ -75,3 +84,21 @@ Deno.serve(async (req) => {
     return Response.json({ error: message }, { status, headers: corsHeaders });
   }
 });
+
+async function logDispatches(
+  service: ReturnType<typeof createServiceClient>,
+  incidentId: string | null,
+  results: Array<{ contactId: string; status: string }>,
+): Promise<void> {
+  if (results.length === 0) return;
+  const rows = results.map((result) => ({
+    incident_id: incidentId,
+    contact_id: result.contactId,
+    status: result.status === "failed" ? "failed" : "sent",
+  }));
+  const { error } = await service.from("whatsapp_dispatch_log").upsert(rows, {
+    onConflict: "incident_id,contact_id",
+    ignoreDuplicates: true,
+  });
+  if (error) throw new Error(error.message);
+}

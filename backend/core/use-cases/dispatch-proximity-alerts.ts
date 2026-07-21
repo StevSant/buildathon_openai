@@ -1,15 +1,6 @@
 import type { IncidentRepository, MessagingGateway, ProfileRepository } from '../ports';
 
-/**
- * Dispatch WhatsApp alerts to emergency contacts. Two entry points share the same
- * dispatch logic:
- *  - `proximity`: a freshly inserted incident matched some users' alert rules;
- *    notify each matched user's accepted contacts.
- *  - `sos`: the user pressed the manual SOS button; notify their accepted contacts.
- *
- * The Hermes `template` name is supplied by the caller (composition root) from env
- * (WHATSAPP_PROXIMITY_TEMPLATE / WHATSAPP_SOS_TEMPLATE) — never hardcoded here.
- */
+/** Dispatch proximity and SOS alerts through the Hermes webhook. */
 export function makeDispatchProximityAlerts({
   messaging,
   incidents,
@@ -21,9 +12,9 @@ export function makeDispatchProximityAlerts({
 }) {
   return async (
     input:
-      | { kind: 'proximity'; incidentId: string; template: string; params?: Record<string, unknown> }
-      | { kind: 'sos'; userId: string; template: string; params?: Record<string, unknown> },
-  ): Promise<{ sent: number; results: Array<{ id: string; status: string }> }> => {
+      | { kind: 'proximity'; incidentId: string; context?: Record<string, unknown> }
+      | { kind: 'sos'; userId: string; context?: Record<string, unknown> },
+  ): Promise<{ sent: number; results: Array<{ contactId: string; id: string; status: string }> }> => {
     const recipients =
       input.kind === 'proximity'
         ? await incidents.findAlertRecipients({ incidentId: input.incidentId })
@@ -37,20 +28,25 @@ export function makeDispatchProximityAlerts({
             },
           ];
 
-    // Both sources return only opted-in contacts already: get_alert_matches filters
-    // opt_in_status = 'accepted' in SQL, and the SOS path queries status: 'accepted'.
-    const results: Array<{ id: string; status: string }> = [];
+    const results: Array<{ contactId: string; id: string; status: string }> = [];
     for (const recipient of recipients) {
       for (const contact of recipient.contacts) {
-        const sent = await messaging.sendWhatsApp({
-          to: contact.phone,
-          template: input.template,
-          params: input.params,
-        });
-        results.push(sent);
+        // get_alert_matches has no status field; SOS contacts are explicitly filtered.
+        if ('status' in contact && contact.status !== 'accepted') continue;
+        try {
+          const sent = await messaging.sendWhatsApp({
+            to: contact.phone,
+            kind: input.kind,
+            context: input.context,
+          });
+          results.push({ contactId: contact.id, ...sent });
+        } catch {
+          // One unavailable recipient must not abort the rest of the emergency fan-out.
+          results.push({ contactId: contact.id, id: '', status: 'failed' });
+        }
       }
     }
 
-    return { sent: results.length, results };
+    return { sent: results.filter((result) => result.status !== 'failed').length, results };
   };
 }
