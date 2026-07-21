@@ -49,6 +49,7 @@ create table public.profiles (
   verified            boolean not null default false,
   verification_method text check (verification_method in ('registry','algorithmic')),
   trust_score         integer not null default 0,
+  disabled_at         timestamptz,                 -- non-null → account disabled (ADR-020); rows are never deleted
   created_at          timestamptz not null default now()
 );
 
@@ -187,7 +188,6 @@ returns table (
   severity      integer,
   status        text,
   confirmations integer,
-  reporter_name text,        -- display_name only; never cédula/email
   reporter_verified boolean,
   created_at    timestamptz,
   lng           double precision,
@@ -199,7 +199,6 @@ set search_path = ''
 as $$
   select
     i.id, i.title, i.description, i.category, i.severity, i.status, i.confirmations,
-    p.display_name as reporter_name,
     coalesce(p.verified, false) as reporter_verified,
     i.created_at,
     extensions.st_x(i.location::extensions.geometry) as lng,
