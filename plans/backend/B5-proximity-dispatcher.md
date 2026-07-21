@@ -1,5 +1,9 @@
 # B5 — Proximity Dispatcher & WhatsApp Implementation Plan
 
+> **RETIRED — DO NOT EXECUTE.** C1 at
+> `plans/integrations/C1-hermes-chat-integration.md` supersedes this plan and preserves its
+> non-messaging correctness fixes while replacing the obsolete Hermes REST/template contract.
+
 > **For the executing engineer (Codex):** implement task-by-task, top to bottom. Steps use
 > checkbox (`- [ ]`) syntax. There are NO automated tests (ADR-015) — you verify each task by
 > running the stated command and observing the described result. Commit after each task.

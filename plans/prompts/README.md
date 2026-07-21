@@ -1,83 +1,59 @@
-# Pulso — Parallel execution prompts
+# Pulso — Three-person parallel execution prompts
 
-Ready-to-paste prompts for running the `plans/` in **two concurrent Claude Code sessions**
-(one teammate per lane), each fanning out **parallel sub-agents** per plan.
+Ready-to-paste prompts for three concurrent Codex sessions, one teammate per owned lane.
+All sessions read the frozen seam in `plans/CONTRACT.md`; no session may widen its file
+ownership without a three-person sync.
 
-> The lanes are disjoint directories (`frontend/**` vs `backend/**`) with a single frozen seam
-> (`plans/CONTRACT.md`), so the two sessions never touch the same files and merges never conflict.
-> See [`../00-README.md`](../00-README.md) for the ownership matrix.
+## Kickoff
 
----
+1. Start all three sessions from the same committed baseline.
+2. Person B runs B1 then B6 as the bootstrap gate and announces **"B1+B6 frozen"**.
+3. Person A may run F1-F6 while the gate is in progress because they code against the already
+   approved target contract. F7 waits for both the gate and F1-F3 because it edits their files.
+4. Person C may implement C1's repo/VM artifacts while the gate runs. Cloud database work,
+   shared-doc edits, and final delivery checks wait for the stated dependencies.
 
-## How to use
-
-1. **Sync once (H0, 30s):** agree the shared baseline is committed and both lanes branch from it.
-   Freeze `plans/CONTRACT.md`, `backend/supabase/migrations/**`, `backend/core/domain` type
-   unions, root `package.json` / `tsconfig.base.json`. Nobody edits those concurrently after now.
-2. **Session 1 (Person A):** paste [`session-frontend.md`](session-frontend.md) into a fresh
-   Claude Code session opened in the repo root.
-3. **Session 2 (Person B):** paste [`session-backend.md`](session-backend.md) into a second fresh
-   session. It does **B1 first** (schema gate), then fans out.
-4. Each orchestrator dispatches one sub-agent per plan using the wrapper prompts in
-   [`subagents/`](subagents/). It can paste them verbatim as the `prompt` of a `general-purpose`
-   Agent (Task) — issuing all of a group in a **single message** so they run concurrently.
-
----
-
-## Parallelization map
-
-Because the scaffold already exists (build is green) and every plan is a **surgical edit of
-existing, file-disjoint code**, the fan-out is wide and collision-free.
-
-### Frontend lane — all six run in parallel
-The orchestrator owns the few shared files first (`app/layout.tsx`, `app/(app)/layout.tsx`,
-`components/TabBar.tsx`, providers, `lib/supabase.ts`, and the `index.ts` barrels), then dispatches:
-
-| Sub-agent | Plan | Owns (under `frontend/`) |
+| Person | Session prompt | Lane |
 |---|---|---|
-| F1 | auth + profile | `app/auth/`, `components/AuthForm.tsx`, `app/(app)/profile/page.tsx` |
-| F2 | live map | `app/(app)/page.tsx`, `components/IncidentMap.tsx`, `IncidentDetailSheet.tsx`, `lib/incidents.ts` |
-| F3 | report | `app/(app)/report/page.tsx`, `components/ReportForm.tsx` |
-| F4 | voice assistant | `app/(app)/assistant/page.tsx`, `components/RealtimeAssistant.tsx`, `lib/realtime-agent.ts`, `lib/realtime-tools.ts` |
-| F5 | notifications | `app/(app)/notifications/page.tsx`, `components/Notification{Bell,Toast,BottomSheet}.tsx`, `lib/notifications.ts` |
-| F6 | safety / WhatsApp / SOS | `app/(app)/profile/security/page.tsx`, `components/EmergencyContactsForm.tsx`, `AlertRulesForm.tsx`, `SosButton.tsx` |
+| A | [`session-frontend.md`](session-frontend.md) | `frontend/**` |
+| B | [`session-backend.md`](session-backend.md) | backend excluding the messaging carve-out |
+| C | [`session-integrations.md`](session-integrations.md) | messaging carve-out, Hermes, deploy, delivery docs |
 
-### Backend lane — B1 gate, then B2–B5 in parallel
-`B1` freezes the schema/RPCs everything references, so it runs **first, alone**. After it lands,
-B2–B5 edit disjoint files (even B3 and B4 only share the `adapters/ai/` *folder*, not any file):
+## Safe fan-out
 
-| Sub-agent | Plan | Owns |
-|---|---|---|
-| **B1 (first)** | schema/RLS/RPC/seed | `backend/supabase/migrations/**`, `backend/supabase/seed.sql` |
-| B2 | identity | `backend/supabase/functions/verify-identity/`, `backend/adapters/identity/`, `backend/adapters/persistence/hash-cedula.ts` |
-| B3 | vision | `backend/supabase/functions/analyze-report/`, `backend/adapters/ai/openai-vision-analyzer.ts`, `fake-analyzer.ts`, `backend/core/use-cases/analyze-report.ts` |
-| B4 | realtime + tools | `backend/supabase/functions/create-realtime-session/`, `agent-tools/`, `backend/adapters/ai/openai-realtime-session-factory.ts`, `realtime-persona.ts` |
-| B5 | proximity dispatcher | `backend/supabase/functions/proximity-dispatcher/`, `backend/adapters/messaging/` |
+### Frontend
 
----
+The frontend orchestrator first owns shared layouts, providers, TabBar, Supabase client, and
+barrels. It may then dispatch F1-F6 together because their feature files are disjoint. F7 runs
+after F1-F6 integration because it deliberately revisits F1/F2/F3 files.
 
-## The one collision rule for sub-agents
+### Backend
 
-Sub-agents share one working directory. The only way two of them clash is by editing the **same
-file** — almost always an `index.ts` / barrel. So every wrapper prompt forbids editing barrels:
-if an agent needs a new export, it **reports it in its return summary** and the orchestrator wires
-the barrel after integration. Everything else is file-disjoint by design.
+B1 and B6 run sequentially. After the **B1+B6 frozen** announcement, B2-B4 may run together.
+Person B owns backend barrels and shared backend configuration, except Hermes keys in
+`_shared/env.ts`, which belong to Person C after the gate.
 
-**Turbo alternative:** dispatch each sub-agent with `isolation: worktree` (its own git worktree)
-and merge sequentially. Faster, but you trade zero-conflict for some merge reconciliation. For a
-hackathon the grouped fan-out above is the reliable fast path.
+### Integrations & delivery
 
----
+C1-C3 are not a blind parallel fan-out:
 
-## Verify (no automated tests — ADR-015)
+1. Implement C1 repo changes and VM artifacts.
+2. After B1+B6, use C2 to link/push/deploy the cloud baseline.
+3. Finish C1 VM/WhatsApp/webhook setup, then set the Hermes and proximity webhook secrets.
+4. Finish C2's Vercel/demo checks.
+5. Run C3's final README/evidence pass after B6 docs and C2 outputs exist.
 
-- **Frontend:** sub-agents run `cd frontend && npx tsc --noEmit`; the **orchestrator** runs the
-  authoritative `cd frontend && npx tsc --noEmit && npx next build` once after integrating.
-- **Backend:** sub-agents run `npm run typecheck`; the orchestrator runs the final
-  `npm run typecheck` (core + adapters) and, if Deno is available, `deno check` the edge functions.
+## Collision rules
 
-## Final review fan-out (both lanes)
+- Never edit `plans/CONTRACT.md` after the B1+B6 freeze without all three people agreeing.
+- Person C never edits migrations. The incident webhook is configured in Supabase Dashboard
+  with `x-pulso-webhook-secret`.
+- Person B owns backend barrels. Person C reports any new export instead of editing a barrel.
+- Person C edits `docs/DECISIONS.md` and `docs/DATA-MODEL.md` only after B6 completes.
+- Each orchestrator runs its lane verification before handoff. The final integrator runs root
+  typecheck, frontend lint/build, and available Supabase/Deno checks.
 
-After integration, each orchestrator dispatches reviewers in parallel and fixes CRITICAL/HIGH:
-- Frontend: `ecc:react-reviewer` + `ecc:typescript-reviewer`
-- Backend: `ecc:typescript-reviewer` + `ecc:database-reviewer` + `ecc:security-reviewer`
+## Retired work
+
+`plans/backend/B5-proximity-dispatcher.md` and its former wrapper are retired. C1 supersedes
+the old Hermes REST/template approach; never dispatch B5.

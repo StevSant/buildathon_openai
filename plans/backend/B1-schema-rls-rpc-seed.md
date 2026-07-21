@@ -10,8 +10,8 @@ and `plans/CONTRACT.md`).
 two frozen-contract fixes (H0-A: coordinates in the map RPCs; H0-B: snake_case domain types)
 plus the one missing table (`whatsapp_dispatch_log`) so every other plan codes against a
 correct, consistent contract.
-**Depends on:** nothing. **This is the "do first" plan** — B2–B5 and every frontend plan assume
-its output. Run it before anything else.
+**Depends on:** nothing. **This is the first half of the bootstrap gate** — run B6 immediately
+after it. B2-B4, F7, and database-dependent C1/C2 steps wait for the "B1+B6 frozen" announcement.
 **Reads from CONTRACT:** §1 (lane ownership), §2 (shared types — this plan EDITS it), §3.2 (RPCs).
 
 ## Global Constraints (apply to every task)
@@ -463,8 +463,8 @@ exercised end-to-end from the app in F2. Note that in this task.)
 
 - [ ] **Step 3: Report readiness**
 
-State in the commit body that B1 is complete and B2–B5 + the frontend plans may proceed against
-the post-H0 contract.
+State in the commit body that B1 is complete and B6 must run next. Do not announce the schema
+and contract frozen until B6 also completes.
 
 - [ ] **Step 4: Commit**
 

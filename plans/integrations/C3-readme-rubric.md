@@ -7,7 +7,8 @@
 "combustible", evidencia, ODS + métrica* — and clear the known cosmetic doc drift.
 
 **Owns:** root `README.md`, `docs/DATA-MODEL.md` cosmetics, `docs/ARCHITECTURE.md` cosmetics.
-Coordinate with Person B before touching anything B6 also edits (`docs/DECISIONS.md` regions).
+Start the README structure at H0, but edit `docs/DATA-MODEL.md` only after Person B announces
+"B1+B6 frozen." Run the final evidence/read-through task after C2 provides the demo URL and model notes.
 
 ---
 
@@ -25,14 +26,14 @@ Coordinate with Person B before touching anything B6 also edits (`docs/DECISIONS
 - [ ] **Codex/agents as build tool** — short narrative of the plans/lanes workflow (rubric:
       Uso de OpenAI + Codex, 25 pts).
 
-## Task 2: Cosmetic drift cleanup
+## Task 2: Post-B6 cosmetic drift cleanup
 
-- [ ] `docs/DATA-MODEL.md` §7 — seed coords still show Manta; update to Portoviejo
-      (`-1.05458,-80.45445`) and the lng/lat DTO note.
-- [ ] `docs/ARCHITECTURE.md` + README — replace the old single-root layout with
-      `frontend/` + `backend/` paths.
+- [ ] Verify `docs/DATA-MODEL.md` mirrors B6's final anonymous incident-details shape and
+      Portoviejo seed coordinates; do not re-edit sections that are already correct.
+- [ ] Verify `docs/ARCHITECTURE.md` + README use the real `frontend/` +
+      `backend/{core,adapters,supabase}` paths and the three ownership lanes.
 
-## Task 3: Final read-through
+## Task 3: Final read-through (after C2)
 
 - [ ] Read the README top-to-bottom as a judge with the rubric next to it
       (Producto 30 · OpenAI+Codex 25 · Técnica 20 · Demo 15 · Impacto 10). Fix gaps.

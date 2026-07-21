@@ -1,8 +1,8 @@
 # Pulso — Frontend ↔ Backend Contract (FROZEN)
 
-**This is the single seam between the two work lanes.** Freeze it at kickoff (H0). Both
-lanes code against it in parallel; neither edits the other's files. Any change here is a
-30-second sync between the two people, never a concurrent edit.
+**This is the single seam between the three work lanes.** Freeze it during the B1+B6
+bootstrap gate. Every lane codes against it; only Person B edits it during that gate.
+Later changes require an explicit three-person sync and must never be concurrent edits.
 
 > Related: [`00-README.md`](00-README.md) (ownership matrix + how to run with Codex),
 > `docs/ARCHITECTURE.md` (system design), `docs/DATA-MODEL.md` (canonical schema/SQL).
@@ -14,7 +14,8 @@ lanes code against it in parallel; neither edits the other's files. Any change h
 | Lane | May edit ONLY | Owner |
 |---|---|---|
 | **Frontend** | `frontend/**` | Person A |
-| **Backend** | `backend/supabase/**`, `backend/core/**`, `backend/adapters/**` | Person B |
+| **Backend** | `backend/supabase/**`, `backend/core/**`, `backend/adapters/**`, excluding the messaging carve-out below | Person B |
+| **Integrations & delivery** | `backend/core/ports/messaging-gateway.ts`, `backend/core/use-cases/dispatch-proximity-alerts.ts`, `backend/adapters/messaging/**`, `backend/supabase/functions/proximity-dispatcher/**`, Hermes keys in `_shared/env.ts`, `docs/hermes/**`, deployment operations, and delivery docs | Person C |
 
 **Shared / frozen (change only by explicit agreement, ideally never after H0):**
 `backend/core/domain` type unions (the type contract below), `backend/supabase/migrations/**` (the schema),
@@ -41,9 +42,9 @@ type NearbyIncident = {
   confirmations: number; created_at: string; lng: number; lat: number
 }
 // One incident's public view: everything in NearbyIncident except distance_meters
-// (a single-incident lookup has no user origin to measure from), plus the reporter fields.
+// (a single-incident lookup has no user origin to measure from), plus a verification badge.
 type IncidentDetails = Omit<NearbyIncident, 'distance_meters'> & {
-  reporter_name: string | null; reporter_verified: boolean
+  reporter_verified: boolean
 }
 ```
 
@@ -63,7 +64,7 @@ lane owns the tables, RLS policies, and RPC bodies.
 | RPC | Args | Returns |
 |---|---|---|
 | `get_nearby_incidents` | `user_lat` float, `user_long` float, `radius_meters` int (default 3000), `filter_category` text\|null | rows of `NearbyIncident` (≤20, ordered by distance) |
-| `get_incident_details` | `target_id` uuid | one `IncidentDetails` (no reporter PII beyond `display_name` + `verified`) |
+| `get_incident_details` | `target_id` uuid | one anonymous `IncidentDetails` (verification badge only; no reporter name or cédula) |
 | `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }` |
 
 ### 3.3 Table writes (RLS-guarded — client writes only its own rows)
@@ -130,17 +131,20 @@ Bridge flow (frontend): OpenAI `response.function_call_arguments.done` → POST 
 **Backend (Supabase Edge secrets — never shipped to the browser):**
 `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_REALTIME_MODEL`, `OPENAI_VISION_MODEL`,
 `OPENAI_REALTIME_VOICE`, `CEDULA_HASH_PEPPER`, `IDENTITY_VERIFY_API_URL`,
-`IDENTITY_VERIFY_API_KEY`, `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_WHATSAPP_FROM`,
-`WHATSAPP_PROXIMITY_TEMPLATE`, `WHATSAPP_SOS_TEMPLATE`, `MAX_RADIUS_METERS`,
+`IDENTITY_VERIFY_API_KEY`, `HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_SECRET`, `MAX_RADIUS_METERS`,
 `DEFAULT_RADIUS_METERS`, `INCIDENT_TTL_HOURS`, `CONFIRM_THRESHOLD`, `DISPUTE_THRESHOLD`,
 `TRUST_VERIFIED_BONUS`, `TRUST_PER_CONFIRMED`, `TRUST_PER_DISPUTED`, `TIMEZONE`,
 `DEFAULT_LANGUAGE`.
 
+**Hermes VM/MCP process (server-only; never exposed to the browser or committed):**
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The service-role key is scoped to the trusted VM
+shim and must not appear in any `NEXT_PUBLIC_*` variable, client bundle, log, or chat transcript.
+
 ---
 
-## 7. Git protocol (disjoint dirs → conflict-free merges)
+## 7. Git protocol (owned files + sequenced shared docs)
 
 - Branch per plan: `feat/f2-live-map`, `feat/b2-identity`, …
-- Because the two lanes touch disjoint directories, merges to the shared branch never
-  conflict. The only files both lanes read are the frozen ones in §1 — settle those at H0.
+- Application edits stay within the lane matrix. Person B completes the B1+B6 shared-file gate
+  before Person C's documentation pass; shared docs are never edited concurrently.
 - Commit convention: Conventional Commits in **English** (personal/SteveSant project).

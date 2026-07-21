@@ -1,15 +1,15 @@
 # Pulso — Implementation Plans (for Codex, 3 people in parallel)
 
 These are self-contained implementation plans meant to be executed by **Codex**, one plan
-at a time. They are split into three **non-colliding lanes** so three people can work
-simultaneously without ever editing the same files.
+at a time. They are split into three file-owned lanes so three people can work simultaneously.
+The few shared documentation files are sequenced explicitly instead of being edited concurrently.
 
 **Read first:** [`CONTRACT.md`](CONTRACT.md) — the frozen frontend↔backend seam. Every plan
 codes against it.
 
 ---
 
-## Ownership matrix (the non-collision guarantee)
+## Ownership matrix
 
 | Lane | May edit ONLY | Owner |
 |---|---|---|
@@ -17,19 +17,20 @@ codes against it.
 | **Backend** | `backend/supabase/**`, `backend/core/**`, `backend/adapters/**` — **minus Person C's messaging carve-out below** | Person B |
 | **Integrations & delivery** | The messaging carve-out: `backend/core/ports/messaging-gateway.ts`, `backend/core/use-cases/dispatch-proximity-alerts.ts`, `backend/adapters/messaging/**`, `backend/supabase/functions/proximity-dispatcher/**`, the Hermes block of `backend/supabase/functions/_shared/env.ts` + root `.env.example` — plus `docs/hermes/**`, root `README.md`, and everything off-repo (Hermes VM, Supabase cloud, Vercel) | Person C |
 
-**Frozen at H0 (do not edit concurrently):** `backend/core/domain` type unions,
-`backend/supabase/migrations/**`, root `package.json` / `tsconfig.base.json`, `plans/CONTRACT.md`.
-(`B6` is the one agreed amendment to migrations + CONTRACT — Person B runs it right after `B1`,
-before the fan-out.)
+**Bootstrap gate (Person B):** run B1 and B6 back-to-back before database- or
+anonymity-dependent work. During that gate, Person B owns `backend/core/domain`,
+`backend/supabase/migrations/**`, `plans/CONTRACT.md`, `docs/DECISIONS.md`, and
+`docs/DATA-MODEL.md`. Person B then announces **"B1+B6 frozen"**.
 
-Because the lanes are file-disjoint, git merges to the shared branch never conflict. The two
-cross-lane touchpoints, both trivial:
+The application lanes are file-disjoint after that gate. Shared touchpoints are handled as follows:
 
 - **Backend barrels** (`@pulso/core` / `@pulso/adapters` `index.ts`): owned by Person B. C1 only
   rewrites files that are already exported, so C normally never needs them — if C does need a new
   export, ask B (30-second sync).
-- **`docs/DECISIONS.md`**: B6 appends ADR-020 at the end; C1 inserts a revision note under
-  ADR-017. Different regions — merges clean, but say it out loud when you touch it.
+- **Shared docs:** Person C edits `docs/DECISIONS.md` and `docs/DATA-MODEL.md` only after the
+  B1+B6 freeze. C3's final evidence pass runs after C2 produces the demo URL/model notes.
+- **Migrations and contract:** Person C never edits them. Deployment-only wiring belongs in
+  Supabase Dashboard/CLI steps, not in a late migration exception.
 
 ---
 
@@ -67,17 +68,15 @@ cross-lane touchpoints, both trivial:
 
 ## Dependencies & suggested order
 
-- **`B1` is the only hard prerequisite for everyone** (it freezes the schema/RPCs the whole
-  contract references). Person B does `B1` then `B6` (the agreed schema/CONTRACT amendment)
-  back-to-back, announces "B1+B6 frozen", and only then fans out. After that, all three lanes
-  run fully in parallel.
+- **`B1+B6` is the bootstrap gate** for the final schema, RLS, RPCs, and anonymous public
+  contract. Person B runs them back-to-back and announces "B1+B6 frozen" before B2-B4,
+  F7, C1 deployment checks, or C2 database work.
 - Every frontend plan codes against the **frozen endpoints in `CONTRACT.md`**, so Person A is
   never blocked waiting for a backend function — stub/`FakeAnalyzer` responses match the
   contract shapes. `F7` needs the "B1+B6 frozen" announcement first; start with F1–F6.
-- **Person C from H0:** `C1` Part A (messaging carve-out) and Part B (MCP shim) touch none of
-  B's files and can start immediately; `C1` Part C (VM runbook) and `C2` Part A need the frozen
-  migrations + deployed functions, so they slot naturally after "B1+B6 frozen". `C3` is
-  independent and fills any wait.
+- **Person C from H0:** C1's messaging carve-out and MCP shim can start immediately. C1's
+  deployment checks and C2 database work wait for "B1+B6 frozen". C3 can prepare structure
+  during the wait, but its final evidence pass waits for both B6's docs edits and C2's outputs.
 - Natural pairings once `B1+B6` land: `F1`↔`B2`, `F3`↔`B3`, `F4`↔`B4`, `F6`↔`C1`.
   `F2` and `F5` only need `B1`.
 
@@ -90,7 +89,7 @@ cross-lane touchpoints, both trivial:
 3. Work on a branch per plan (`feat/f2-live-map`, `feat/b2-identity`, `feat/c1-hermes`).
 4. Keep edits inside your lane's files (see the ownership matrix). If you think you need
    to touch a frozen/shared file, ping the owner first — it's a 30-second sync.
-5. Merge freely — file-disjoint lanes mean no conflicts.
+5. Merge application work freely; merge the explicitly shared docs in the sequence above.
 
 ## Conventions (inherited by every plan)
 - No automated tests (ADR-015) — verify by running the demo path.

@@ -25,23 +25,24 @@ and the unique `cedula_hash` tombstone blocks re-registration.
 - Comments/commits in English; no user-facing strings in this lane.
 - `supabase` CLI commands run from the `backend/` directory.
 
-**Scaffold reality (verified 2026-07-21):** `get_incident_details` currently returns
+**Scaffold reality (verified 2026-07-21):** the implementation still returns
 `reporter_name` (migration `0001_init.sql:155,167`), mirrored in
 `backend/core/domain/incident-details.ts:19`,
-`backend/adapters/persistence/supabase-incident-repository.ts:82`, `plans/CONTRACT.md:46`,
-and `docs/DATA-MODEL.md:190,202`. `profiles` has `trust_score` but no disable mechanism, and
+`backend/adapters/persistence/supabase-incident-repository.ts:82`, and
+`docs/DATA-MODEL.md:190,202`. The frozen `plans/CONTRACT.md` already contains the approved
+anonymous target shape. `profiles` has `trust_score` but no disable mechanism, and
 the `incidents`/`incident_confirmations` insert policies check only row ownership.
 `get_nearby_incidents` carries **no** reporter fields — it needs no change.
 
 ---
 
-### Task 1: Amend the frozen contract (CONTRACT §2 + §3.2)
+### Task 1: Verify the frozen anonymous contract and mark superseded plan examples
 
-This is the agreed H0 amendment (design doc §Decisions). Do it first so both lanes code
-against the new seam.
+The agreed H0 amendment is already frozen in `plans/CONTRACT.md`. Verify it before changing
+implementation so all three lanes code against the same seam.
 
 **Files:**
-- Modify: `plans/CONTRACT.md:41-46` (§2 `IncidentDetails`), `plans/CONTRACT.md:64` (§3.2 row)
+- Verify: `plans/CONTRACT.md` §2 `IncidentDetails` and §3.2 RPC row
 - Modify: `plans/backend/B1-schema-rls-rpc-seed.md` (superseded note),
   `plans/frontend/F2-live-map.md` (superseded note)
 
@@ -49,19 +50,9 @@ against the new seam.
 - Produces: contract type `IncidentDetails = Omit<NearbyIncident, 'distance_meters'> &
   { reporter_verified: boolean }` — consumed by Task 3 (domain type) and by F7.
 
-- [ ] **Step 1: Replace the `IncidentDetails` contract type**
+- [ ] **Step 1: Verify the `IncidentDetails` contract type**
 
-In `plans/CONTRACT.md` §2, replace:
-
-```ts
-// One incident's public view: everything in NearbyIncident except distance_meters
-// (a single-incident lookup has no user origin to measure from), plus the reporter fields.
-type IncidentDetails = Omit<NearbyIncident, 'distance_meters'> & {
-  reporter_name: string | null; reporter_verified: boolean
-}
-```
-
-with:
+Confirm `plans/CONTRACT.md` §2 contains exactly:
 
 ```ts
 // One incident's public view: everything in NearbyIncident except distance_meters
@@ -72,13 +63,9 @@ type IncidentDetails = Omit<NearbyIncident, 'distance_meters'> & {
 }
 ```
 
-- [ ] **Step 2: Update the §3.2 RPC row**
+- [ ] **Step 2: Verify the §3.2 RPC row**
 
-Replace the `get_incident_details` row's Returns cell:
-
-`one `IncidentDetails` (no reporter PII beyond `display_name` + `verified`)`
-
-with:
+Confirm the `get_incident_details` Returns cell says:
 
 `one `IncidentDetails` (anonymous: no reporter identity, only `reporter_verified` — ADR-020)`
 
@@ -96,8 +83,8 @@ Directly under the H1 title of `plans/backend/B1-schema-rls-rpc-seed.md` AND of
 - [ ] **Step 4: Commit**
 
 ```bash
-git add plans/CONTRACT.md plans/backend/B1-schema-rls-rpc-seed.md plans/frontend/F2-live-map.md
-git commit -m "docs(contract): amend IncidentDetails to anonymous shape (ADR-020)"
+git add plans/backend/B1-schema-rls-rpc-seed.md plans/frontend/F2-live-map.md
+git commit -m "docs(plans): mark anonymous IncidentDetails amendment (ADR-020)"
 ```
 
 ---
