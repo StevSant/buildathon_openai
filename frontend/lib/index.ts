@@ -25,3 +25,8 @@ export type {
   AssistantStatus,
   AssistantCallbacks,
 } from "./realtime-agent";
+export type {
+  AssistantLocation,
+  AssistantTurn,
+  AssistantTurnContent,
+} from "./assistant-conversation";
