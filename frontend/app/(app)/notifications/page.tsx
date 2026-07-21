@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { Category, IncidentStatus, NearbyIncident } from "@pulso/core";
-import { Icon } from "@/components";
+import { Icon, IncidentDetailSheet } from "@/components";
 import {
   config,
   decideAlertTier,
@@ -67,6 +67,7 @@ function statusChip(
 // has been dismissed. Its subscription intentionally uses the notifications-specific channel.
 export default function NotificationsPage() {
   const [rows, setRows] = useState<NearbyIncident[]>([]);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const location = useRef({
     lat: config.defaultLat,
     long: config.defaultLng,
@@ -114,7 +115,7 @@ export default function NotificationsPage() {
   })).filter((group) => group.items.length > 0);
 
   return (
-    <div className="s-notif">
+    <div className="s-notif" style={{ position: "relative" }}>
       <div className="nhead">
         <span className="t">Notificaciones</span>
       </div>
@@ -151,9 +152,12 @@ export default function NotificationsPage() {
                 const chip = statusChip(row.status);
 
                 return (
-                  <div
+                  <button
                     key={row.id}
+                    type="button"
+                    onClick={() => setSelectedIncidentId(row.id)}
                     className={isUnread ? "notif unread" : "notif"}
+                    style={{ textAlign: "left", width: "100%" }}
                   >
                     <div className="ni" style={{ background: color }}>
                       <Icon name={icon} />
@@ -174,12 +178,20 @@ export default function NotificationsPage() {
                       </div>
                     </div>
                     {isUnread && <span className="undot" />}
-                  </div>
+                  </button>
                 );
               })}
             </Fragment>
           ))}
         </div>
+      )}
+
+      {selectedIncidentId && (
+        <IncidentDetailSheet
+          incidentId={selectedIncidentId}
+          onClose={() => setSelectedIncidentId(null)}
+          viewer={location.current}
+        />
       )}
     </div>
   );
