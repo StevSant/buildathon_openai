@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "@pulso/core": "../../core/index.ts",
+    "@pulso/adapters": "../../adapters/index.ts",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "openai": "npm:openai@4"
+  }
+}
