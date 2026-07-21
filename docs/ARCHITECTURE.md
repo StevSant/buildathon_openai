@@ -52,6 +52,16 @@ Separately, a DB trigger on `incidents` INSERT invokes **`proximity-dispatcher`*
 WhatsApp via the **Hermes** gateway (outbound only) — the optional safety layer, see
 [ADR-017](DECISIONS.md).
 
+### Ownership lanes
+
+The repository has two runtime code roots and a third delivery lane:
+
+| Lane | Owned paths | Boundary |
+|---|---|---|
+| Frontend | `frontend/` | browser UI and thin HTTP/WebRTC clients |
+| Backend | `backend/core/`, `backend/adapters/`, `backend/supabase/` | domain, ports, adapters, migrations and Edge Functions |
+| Integrations & delivery | `plans/integrations/`, deployment runbooks and evidence | cloud wiring and judge-facing proof; no application code |
+
 ## 2. Components & responsibilities
 
 ### 2.1 Frontend (Next.js) — mobile-first PWA
@@ -116,11 +126,13 @@ components/
 
 ### 2.4 Messaging — WhatsApp via Hermes (optional safety layer)
 The `proximity-dispatcher` function sends outbound WhatsApp through the **`MessagingGateway`**
-port. The adapter invokes the signed Hermes `pulso-alerts` webhook using
-`HERMES_WEBHOOK_URL` and `HERMES_WEBHOOK_SECRET`. The database webhook invoking the dispatcher
-is independently authenticated with `PROXIMITY_WEBHOOK_SECRET`. This is the only channel that
-reaches a user with the app closed, and it is a P1/P2 layer — **not a core pillar**
-([ADR-017](DECISIONS.md)).
+port; the concrete adapter is **`HermesWhatsAppGateway`**. It POSTs one JSON body to Hermes'
+public `pulso-alerts` webhook and signs the exact bytes with HMAC-SHA256 over
+`<unix_timestamp>.<body>` (`x-webhook-timestamp`, `x-webhook-signature-v2`, and a stable
+`x-request-id`). Configuration is server-side only: `HERMES_WEBHOOK_URL`,
+`HERMES_WEBHOOK_SECRET`, and `PROXIMITY_WEBHOOK_SECRET` (the database-webhook guard). This is
+the only channel that reaches a user with the app closed, and it is a P1/P2 layer — **not a
+core pillar** ([ADR-017](DECISIONS.md)).
 
 ## 3. Core flows
 
@@ -243,7 +255,7 @@ RPC get_alert_matches(incident_id):
    alert_rules (enabled, severity ≥ min_severity, st_dwithin(location, center, radius_meters))
    ⨝ whatsapp_config (enabled) ⨝ emergency_contacts (opt_in_status = 'accepted')
         ↓
-for each match → MessagingGateway.sendWhatsApp({ to, kind, context })  (Hermes)
+for each match → MessagingGateway.sendWhatsApp({ to, kind, context? }) → signed Hermes webhook
         ↓
 record in whatsapp_dispatch_log (unique per incident+contact → idempotent)
 
@@ -322,16 +334,17 @@ Nothing hardcoded. All tunables are environment variables.
 | `INCIDENT_TTL_HOURS` | Edge secret | Incident expiry (adapter `create()` path; DB default 24h) |
 | `CONFIRM_THRESHOLD` / `DISPUTE_THRESHOLD` | Edge secret | Votes needed to flip status (passed to `confirm_incident`) |
 | `TRUST_VERIFIED_BONUS` / `TRUST_PER_CONFIRMED` / `TRUST_PER_DISPUTED` | Edge secret | Trust-score weights (helper not wired yet) |
-| `HERMES_WEBHOOK_URL` / `_WEBHOOK_SECRET` | Edge secret | Hermes alert webhook + HMAC signing secret |
-| `PROXIMITY_WEBHOOK_SECRET` | Edge secret | Authenticates the database webhook invoking the dispatcher |
+| `HERMES_WEBHOOK_URL` | Edge secret | Public Hermes `pulso-alerts` webhook URL |
+| `HERMES_WEBHOOK_SECRET` | Edge secret | HMAC V2 secret shared with Hermes |
+| `PROXIMITY_WEBHOOK_SECRET` | Edge secret | Guard for the Supabase Database Webhook invoking `proximity-dispatcher` |
 | `TIMEZONE` / `DEFAULT_LANGUAGE` | Edge secret | Locale (`America/Guayaquil`, `es`) |
 
 ## 7. Deployment
 - **Frontend:** Vercel (connect the repo, set `NEXT_PUBLIC_*` env, deploy).
 - **Backend:** Supabase Cloud — apply migrations (`0001_init`, `0002_whatsapp_sos`), deploy the
-  five Edge Functions, set secrets. For the safety layer, wire the DB trigger/webhook on
-  `incidents` INSERT → `proximity-dispatcher`, include `x-pulso-webhook-secret`, and set the
-  Hermes webhook/signing secrets plus the independent proximity-webhook secret.
+  five Edge Functions, set secrets. For the safety layer, wire the Database Webhook on
+  `incidents` INSERT → `proximity-dispatcher`, set its `x-pulso-webhook-secret`, and set the
+  Hermes webhook secrets above.
 - **Demo devices:** at least two (phone + laptop) to show the collaborative live map.
 
 ## 8. Code architecture — pragmatic hexagonal (ports & adapters)
@@ -357,7 +370,7 @@ backend/                     # everything server-side (npm workspaces: backend/c
     identity/    algorithmic-verifier.ts · registry-api-verifier.ts · composite-verifier.ts
     ai/          openai-vision-analyzer.ts · fake-analyzer.ts · openai-realtime-session-factory.ts
     persistence/ supabase-incident-repository.ts · supabase-profile-repository.ts
-    messaging/   hermes-whatsapp-gateway.ts
+    messaging/   hermes-whatsapp-gateway.ts (Hermes `pulso-alerts` webhook)
   supabase/functions/  # HTTP adapters (thin handlers) + composition roots
 frontend/            # Next.js PWA — thin lib/ HTTP clients + UI (no hexagon inside React)
 ```
@@ -377,7 +390,7 @@ edge handlers ─┼─► use-cases ─► ports ◄─ adapters ─► OpenAI 
 | `IncidentAnalyzer` | `analyze({image}) → {category, severity, title, description}` | `OpenAIVisionAnalyzer`, `FakeAnalyzer` (local dev, no OpenAI calls) |
 | `IncidentRepository` / `ProfileRepository` | `findNearby` · `getDetails` · `create` · `confirm(id, kind)` / `createVerified` | `SupabaseIncidentRepository`, `SupabaseProfileRepository` |
 | `AgentSessionFactory` | `createSession({personaId, context}) → clientSecret` | `OpenAIRealtimeSessionFactory` |
-| `MessagingGateway` | `sendWhatsApp({ to, template, params })` | `HermesWhatsAppGateway` |
+| `MessagingGateway` | `sendWhatsApp({ to, kind, context? })` | `HermesWhatsAppGateway` |
 
 The domain (`core/domain`) is pure: `validateCedula` (module-10), incident invariants,
 status transitions, trust scoring — no I/O, so it stays pure and easy to reason about.
