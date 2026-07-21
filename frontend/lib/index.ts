@@ -3,6 +3,7 @@
 export { config } from "./config";
 export type { AppConfig } from "./config";
 export { supabase } from "./supabase";
+export { getSession, onAuthChange, signOut } from "./auth";
 export {
   getNearbyIncidents,
   getIncidentDetails,
