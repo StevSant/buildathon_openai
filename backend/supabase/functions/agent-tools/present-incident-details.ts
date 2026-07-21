@@ -7,9 +7,9 @@ import type { IncidentDetails } from "@pulso/core";
 import { formatTimeAgo } from "./format-time-ago.ts";
 import { minutesSince } from "./minutes-since.ts";
 
-// Presentation layer for get_incident_details: speak-ready Spanish labels, an explicit
-// found flag (instead of a bare null), and no exact coordinates or storage paths — the
-// agent only needs to know whether a photo exists, the app renders it.
+// Presentation layer for get_incident_details: speak-ready Spanish labels and an explicit
+// found flag (instead of a bare null). No exact coordinates — the agent must never mention
+// them. photo_path stays: the assistant UI renders the photo card from this same payload.
 export function presentIncidentDetails(details: IncidentDetails | null) {
   if (!details) {
     return {
@@ -37,6 +37,7 @@ export function presentIncidentDetails(details: IncidentDetails | null) {
         ? "reportado por una persona con identidad verificada"
         : "reportado por una persona sin identidad verificada",
       has_photo: details.photo_path !== null,
+      photo_path: details.photo_path,
       created_at: details.created_at,
       reported_minutes_ago: minutesSince(details.created_at),
       reported_label: formatTimeAgo(details.created_at),

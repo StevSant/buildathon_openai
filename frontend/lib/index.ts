@@ -12,7 +12,7 @@ export {
 } from "./incidents";
 export { haversineMeters } from "./distance";
 export { REALTIME_TOOLS } from "./realtime-tools";
-export { TOOL_CALL_LABELS } from "./tool-labels";
+export { TOOL_CALL_LABELS } from "./tool-call-labels";
 export { compressImage } from "./compress-image";
 export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";

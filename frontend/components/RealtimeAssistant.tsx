@@ -38,50 +38,87 @@ export default function RealtimeAssistant({
   const [status, setStatus] = useState<AssistantStatus | "idle">("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const handle = useRef<AssistantHandle | null>(null);
+  // Synchronous guards (React state updates are not): `starting` deduplicates concurrent
+  // start() calls so rapid taps can never open two sessions (orphaning a live mic), and
+  // `generation` invalidates a connect that finishes after the user already hit stop.
+  const starting = useRef<Promise<AssistantHandle | null> | null>(null);
+  const generation = useRef(0);
 
   function addTurn(turn: Turn) {
     setTurns((previousTurns) => [...previousTurns, turn]);
   }
 
-  async function start(): Promise<AssistantHandle | null> {
+  function start(): Promise<AssistantHandle | null> {
+    if (handle.current) return Promise.resolve(handle.current);
+    if (starting.current) return starting.current;
+    const sessionGeneration = generation.current;
     setStatus("connecting");
+    starting.current = connect(sessionGeneration);
+    return starting.current;
+  }
+
+  async function connect(
+    sessionGeneration: number,
+  ): Promise<AssistantHandle | null> {
     try {
       const position = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
         }),
       );
-      handle.current = await startRealtimeSession(
+      const session = await startRealtimeSession(
         personaId,
         { lat: position.coords.latitude, long: position.coords.longitude },
         {
           onStatus: setStatus,
           onUserTranscript: (text) => addTurn({ kind: "text", role: "user", text }),
           onAgentTranscript: (text) => addTurn({ kind: "text", role: "agent", text }),
-          onToolCall: (name) => addTurn({ kind: "text", role: "tool", text: `→ ${name}` }),
+          onToolCall: (name) =>
+            addTurn({ kind: "text", role: "tool", text: TOOL_CALL_LABELS[name] ?? `→ ${name}` }),
+          // agent-tools wraps results in a speak-ready envelope: nearby → { incidents: [...] },
+          // details → { found, incident }. The rows are supersets of the CONTRACT shapes.
           onToolResult: (name, result) => {
-            if (name === "get_nearby_incidents" && Array.isArray(result) && result.length > 0) {
-              addTurn({ kind: "incidents", incidents: result as NearbyIncident[] });
+            const envelope =
+              typeof result === "object" && result !== null
+                ? (result as Record<string, unknown>)
+                : {};
+            if (
+              name === "get_nearby_incidents" &&
+              Array.isArray(envelope.incidents) &&
+              envelope.incidents.length > 0
+            ) {
+              addTurn({ kind: "incidents", incidents: envelope.incidents as NearbyIncident[] });
             }
             if (
               name === "get_incident_details" &&
-              typeof result === "object" &&
-              result !== null &&
-              "id" in result
+              envelope.found === true &&
+              typeof envelope.incident === "object" &&
+              envelope.incident !== null
             ) {
-              addTurn({ kind: "detail", details: result as IncidentDetails });
+              addTurn({ kind: "detail", details: envelope.incident as IncidentDetails });
             }
           },
+          onError: (message) =>
+            addTurn({ kind: "text", role: "tool", text: `⚠ ${message}` }),
         },
       );
-      return handle.current;
+      if (generation.current !== sessionGeneration) {
+        // The user hit stop while we were connecting — discard the fresh session.
+        session.stop();
+        return null;
+      }
+      handle.current = session;
+      return session;
     } catch {
-      setStatus("error");
+      if (generation.current === sessionGeneration) setStatus("error");
       return null;
+    } finally {
+      starting.current = null;
     }
   }
 
   function stop() {
+    generation.current += 1;
     handle.current?.stop();
     handle.current = null;
     setStatus("idle");

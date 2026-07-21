@@ -182,7 +182,10 @@ export default function IncidentMap() {
           <span
             className="me"
             aria-label="Tu ubicación"
-            style={{ position: "relative", left: "auto", top: "auto", margin: 0 }}
+            // display:block — the mockup positions these spans absolutely (block box), but
+            // inside a Marker they are static inline spans, and inline boxes collapse to
+            // 0×0 (width/height are ignored), making the dot invisible.
+            style={{ display: "block", position: "relative", left: "auto", top: "auto", margin: 0 }}
           >
             <b />
           </span>
@@ -205,6 +208,9 @@ export default function IncidentMap() {
               }`}
               aria-label={`${CATEGORY_LABEL[incident.category]}, severidad ${incident.severity}`}
               style={{
+                // display:block for the same reason as the location dot: inline spans
+                // collapse to 0×0 inside the Marker wrapper.
+                display: "block",
                 position: "relative",
                 transform: "rotate(45deg)",
                 cursor: "pointer",

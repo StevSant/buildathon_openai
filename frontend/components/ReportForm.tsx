@@ -51,6 +51,7 @@ export default function ReportForm() {
   const [photoPath, setPhotoPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [fields, setFields] = useState<AnalyzedFields | null>(null);
+  const [isCategoryConfirmed, setIsCategoryConfirmed] = useState(false);
   const [location, setLocation] = useState<ReportLocation | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +62,7 @@ export default function ReportForm() {
 
     setError(null);
     setFields(null);
+    setIsCategoryConfirmed(false);
     setLocation(null);
     setPhotoPath(null);
     setPreview(URL.createObjectURL(file));
@@ -130,6 +132,7 @@ export default function ReportForm() {
       const analysis = (await analysisResponse.json()) as AnalyzedFields;
       setPhotoPath(path);
       setFields({ ...analysis, severity: clampSeverity(analysis.severity) });
+      setIsCategoryConfirmed(analysis.category !== "other");
       setLocation(resolvedLocation);
       setPhase("ready");
     } catch (reason) {
@@ -138,8 +141,15 @@ export default function ReportForm() {
     }
   }
 
+  function chooseCategory(category: Category) {
+    setFields((current) => (current ? { ...current, category } : current));
+    setIsCategoryConfirmed(true);
+  }
+
+  const canPublish = Boolean(fields && photoPath && location && isCategoryConfirmed);
+
   async function publish() {
-    if (!fields || !photoPath || !location) return;
+    if (!canPublish || !fields || !photoPath || !location) return;
 
     setError(null);
     setPhase("publishing");
@@ -237,9 +247,7 @@ export default function ReportForm() {
               <select
                 aria-label="Categoría"
                 value={fields.category}
-                onChange={(event) =>
-                  setFields({ ...fields, category: event.target.value as Category })
-                }
+                onChange={(event) => chooseCategory(event.target.value as Category)}
                 style={{
                   position: "absolute",
                   inset: 0,
@@ -258,6 +266,68 @@ export default function ReportForm() {
               </select>
             </label>
           </div>
+
+          {fields.category === "other" && !isCategoryConfirmed && (
+            <div
+              role="alert"
+              style={{
+                margin: "0 14px 12px",
+                padding: 12,
+                border: "1px solid color-mix(in srgb, var(--sev-road) 55%, var(--line))",
+                borderRadius: 12,
+                background: "color-mix(in srgb, var(--sev-road) 8%, var(--panel-2))",
+              }}
+            >
+              <div style={{ display: "flex", gap: 8, color: "var(--sev-road)" }}>
+                <Icon name="ic-alert" />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800 }}>
+                    La IA no pudo identificar el incidente con seguridad.
+                  </div>
+                  <div style={{ marginTop: 2, fontSize: 11, color: "var(--muted)" }}>
+                    ¿Qué está pasando?
+                  </div>
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 7,
+                  marginTop: 10,
+                }}
+              >
+                {CATEGORY_VALUES.map((category) => {
+                  const option = CATEGORY_META[category];
+                  return (
+                    <button
+                      key={category}
+                      type="button"
+                      aria-pressed={false}
+                      onClick={() => chooseCategory(category)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        minWidth: 0,
+                        padding: "8px 9px",
+                        border: `1px solid color-mix(in srgb, ${option.color} 45%, var(--line))`,
+                        borderRadius: 9,
+                        background: `color-mix(in srgb, ${option.color} 12%, var(--panel))`,
+                        color: "var(--ink)",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        textAlign: "left",
+                      }}
+                    >
+                      <Icon name={option.icon} style={{ color: option.color }} />
+                      <span>{CATEGORY_LABELS[category]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="row">
             <span className="lab">Severidad</span>
@@ -379,10 +449,14 @@ export default function ReportForm() {
         type="button"
         className="btn primary"
         style={{ marginTop: "auto" }}
-        disabled={!fields || !location || phase === "publishing"}
+        disabled={!canPublish || phase === "publishing"}
         onClick={publish}
       >
-        {phase === "publishing" ? "Publicando…" : "Publicar incidente"}
+        {phase === "publishing"
+          ? "Publicando…"
+          : fields && !isCategoryConfirmed
+            ? "Confirma la categoría"
+            : "Publicar incidente"}
       </button>
       <p className="mb-0 mt-2 text-[11px] leading-relaxed text-faint">
         🔒 Tu reporte es anónimo: otros usuarios nunca ven tu nombre ni tus datos. Tu identidad

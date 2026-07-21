@@ -1,4 +1,3 @@
-import { decorateAgentToolResult } from "./agent-speech";
 import { config } from "./config";
 import { supabase } from "./supabase";
 
@@ -159,10 +158,30 @@ export async function startRealtimeSession(
       arguments?: string;
       call_id?: string;
       transcript?: string;
+      error?: { message?: string };
     };
     try {
       msg = JSON.parse(event.data);
     } catch {
+      return;
+    }
+
+    // Response lifecycle: only one response may be active per conversation, so queued
+    // questions flush on response.done. Error events (e.g. a rejected response.create)
+    // are surfaced instead of silently dropped.
+    if (msg.type === "response.created") {
+      responseActive = true;
+      return;
+    }
+    if (msg.type === "response.done") {
+      responseActive = false;
+      flushPendingText();
+      return;
+    }
+    if (msg.type === "error") {
+      responseActive = false;
+      callbacks.onError?.(msg.error?.message ?? "error de la sesión de voz");
+      flushPendingText();
       return;
     }
 
@@ -191,10 +210,11 @@ export async function startRealtimeSession(
       msg.call_id
     ) {
       callbacks.onToolCall?.(msg.name);
+      toolCallsInFlight += 1;
       const args = msg.arguments ? JSON.parse(msg.arguments) : {};
       let output: unknown;
       try {
-        output = withReportedAge(msg.name, await runTool(msg.name, args, location));
+        output = await runTool(msg.name, args, location);
         callbacks.onToolResult?.(msg.name, output);
       } catch (err) {
         output = { error: String(err) };
@@ -209,7 +229,9 @@ export async function startRealtimeSession(
           },
         }),
       );
+      responseActive = true;
       dc.send(JSON.stringify({ type: "response.create" }));
+      toolCallsInFlight -= 1;
     }
   };
 
@@ -233,8 +255,11 @@ export async function startRealtimeSession(
 
   return {
     sendText: (text: string) => {
-      if (dc.readyState === "open") sendUserText(text);
-      else pendingTexts.push(text);
+      if (dc.readyState === "open" && !responseActive && toolCallsInFlight === 0) {
+        sendUserText(text);
+      } else {
+        pendingTexts.push(text);
+      }
     },
     stop: () => {
       mic.getTracks().forEach((track) => track.stop());
