@@ -26,8 +26,8 @@ mcp_servers:
     env:
       AGENT_TOOLS_URL: ${AGENT_TOOLS_URL}
       SUPABASE_URL: ${SUPABASE_URL}
-      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
 
 # ── CRITICAL SECURITY: allowlist tools per platform (inclusive model) ────────────
 # Hermes controls tools INCLUSIVELY — a platform only gets the toolsets you assign.

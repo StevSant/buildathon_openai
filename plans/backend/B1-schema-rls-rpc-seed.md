@@ -1,8 +1,19 @@
-# B1 — Schema, RLS, RPC & Seed Implementation Plan
+# B1 — Schema, RLS, RPC & Seed Verification Gate
 
-> **For the executing engineer (Codex):** implement task-by-task, top to bottom. Steps use
-> checkbox (`- [ ]`) syntax. There are NO automated tests (ADR-015) — you verify each task by
-> running the stated command and observing the described result. Commit after each task.
+> **Status (2026-07-21): IMPLEMENTED — verification only.** Do not execute the archived edit or
+> commit steps below. The source now includes coordinates, the dispatch log, the service-role
+> matcher, explicit table/function privileges, and a narrowly restricted `SECURITY DEFINER`
+> community-voting RPC. Security contract tests live in `tests/database-security-contract.test.mjs`.
+
+Before declaring B1 frozen, run `npm test`, `npm run typecheck`, and — when Supabase CLI + Docker
+are available — `(cd backend && supabase db reset)`. Verify an authenticated user can insert a
+report and call the read/voting RPCs, cannot directly write trust/state or confirmation tables,
+and cannot execute `get_alert_matches`. Then run B6 and publish the original B1+B6 frozen signal.
+
+## Archived original implementation plan
+
+The remainder records the original bootstrap sequence for traceability. It is not a current
+execution recipe; the checked-in migrations and tests are authoritative.
 
 **Lane:** Backend (`backend/supabase/**`, and — for the H0 contract decisions only — `backend/core/domain/**`
 and `plans/CONTRACT.md`).
@@ -19,9 +30,9 @@ after it. B2-B4, F7, and database-dependent C1/C2 steps wait for the "B1+B6 froz
 - One object per concern; SQL grouped by the section comments already in the migrations.
 - UI copy in Spanish; code comments, commit messages, this doc → English.
 - Commit convention: Conventional Commits in English.
-- Supabase conventions (already used in the repo): PostGIS in the `extensions` schema; RPCs are
-  `language sql`/`plpgsql` + `security invoker` + `set search_path = ''`; RLS uses
-  `(select auth.uid())`.
+- Supabase conventions: PostGIS lives in the `extensions` schema; read RPCs use
+  `security invoker`, while `confirm_incident` is a restricted `security definer` transaction;
+  every RPC sets `search_path = ''`, and RLS uses `(select auth.uid())`.
 
 **Scaffold reality (verified before writing this plan):**
 - `backend/supabase/migrations/0001_init.sql` and `0002_whatsapp_sos.sql` already exist and are largely

@@ -1,6 +1,6 @@
 -- Pulso — initial schema. Mirrors docs/DATA-MODEL.md §2–§6 (authoritative, rewritten).
--- Supabase conventions: PostGIS in the `extensions` schema; functions are
--- `security invoker` with `set search_path = ''`.
+-- Supabase conventions: PostGIS in the `extensions` schema; functions pin
+-- `search_path = ''`; privileged RPCs have explicit EXECUTE grants.
 
 -- ============================================================================
 -- §2. Extensions
@@ -62,13 +62,13 @@ alter table public.profiles                enable row level security;
 alter table public.incidents               enable row level security;
 alter table public.incident_confirmations  enable row level security;
 
--- profiles: a user sees and edits ONLY their own row
+-- profiles: a user sees only their own row; only display_name is client-editable.
 create policy "own profile - select" on public.profiles
-  for select using ((select auth.uid()) = id);
-create policy "own profile - upsert" on public.profiles
-  for insert with check ((select auth.uid()) = id);
+  for select to authenticated using ((select auth.uid()) = id);
 create policy "own profile - update" on public.profiles
-  for update using ((select auth.uid()) = id);
+  for update to authenticated
+  using ((select auth.uid()) = id)
+  with check ((select auth.uid()) = id);
 
 -- incidents: any authenticated user reads active incidents
 create policy "incidents - read active" on public.incidents
@@ -80,16 +80,18 @@ create policy "incidents - insert own" on public.incidents
   for insert to authenticated
   with check (reporter_id = (select auth.uid()));
 
--- incidents: a user may update only their own report (P1: moderators added later)
-create policy "incidents - update own" on public.incidents
-  for update to authenticated
-  using (reporter_id = (select auth.uid()));
+-- Direct confirmation-table access and incident updates are intentionally absent.
+-- Community voting goes only through the restricted confirm_incident RPC.
 
--- confirmations: insert as self, read your own
-create policy "confirmations - insert own" on public.incident_confirmations
-  for insert to authenticated with check (user_id = (select auth.uid()));
-create policy "confirmations - read own" on public.incident_confirmations
-  for select to authenticated using (user_id = (select auth.uid()));
+-- Explicit Data API privileges. Identity/trust and incident state remain server-owned.
+revoke all on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
+grant update (display_name) on public.profiles to authenticated;
+
+revoke all on public.incidents from anon, authenticated;
+grant select, insert on public.incidents to authenticated;
+
+revoke all on public.incident_confirmations from anon, authenticated;
 
 -- ============================================================================
 -- §5. RPC functions
@@ -189,7 +191,7 @@ create or replace function public.confirm_incident(
 )
 returns table (id uuid, confirmations integer, status text)
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 declare
@@ -202,6 +204,15 @@ begin
   end if;
   if kind not in ('confirm','dispute') then
     raise exception 'invalid kind: %', kind;
+  end if;
+  if confirm_threshold < 1 or dispute_threshold < 1 then
+    raise exception 'thresholds must be positive';
+  end if;
+
+  -- Serialize votes for one incident so concurrent recounts cannot overwrite each other.
+  perform 1 from public.incidents i where i.id = target_id for update;
+  if not found then
+    raise exception 'incident not found';
   end if;
 
   insert into public.incident_confirmations (incident_id, user_id, kind)
@@ -228,6 +239,18 @@ begin
   return query select i.id, i.confirmations, i.status from public.incidents i where i.id = target_id;
 end;
 $$;
+
+-- Functions are not public-by-default API. Grant only the authenticated calls Pulso uses.
+revoke all on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  from public, anon;
+grant execute on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  to authenticated;
+
+revoke all on function public.get_incident_details(uuid) from public, anon;
+grant execute on function public.get_incident_details(uuid) to authenticated;
+
+revoke all on function public.confirm_incident(uuid, text, integer, integer) from public, anon;
+grant execute on function public.confirm_incident(uuid, text, integer, integer) to authenticated;
 
 -- ============================================================================
 -- §6. Storage bucket

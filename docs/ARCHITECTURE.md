@@ -116,9 +116,11 @@ components/
 
 ### 2.4 Messaging — WhatsApp via Hermes (optional safety layer)
 The `proximity-dispatcher` function sends outbound WhatsApp through the **`MessagingGateway`**
-port; the concrete adapter is **`HermesWhatsAppGateway`** (env `HERMES_API_URL`,
-`HERMES_API_KEY`, `HERMES_WHATSAPP_FROM`). This is the only channel that reaches a user with
-the app closed, and it is a P1/P2 layer — **not a core pillar** ([ADR-017](DECISIONS.md)).
+port. The adapter invokes the signed Hermes `pulso-alerts` webhook using
+`HERMES_WEBHOOK_URL` and `HERMES_WEBHOOK_SECRET`. The database webhook invoking the dispatcher
+is independently authenticated with `PROXIMITY_WEBHOOK_SECRET`. This is the only channel that
+reaches a user with the app closed, and it is a P1/P2 layer — **not a core pillar**
+([ADR-017](DECISIONS.md)).
 
 ## 3. Core flows
 
@@ -137,7 +139,7 @@ verify-identity:
   3. upsert profiles row: { id: auth.uid(), cedula_hash (UNIQUE), verified, verification_method }
         ↓
 On UNIQUE violation → "this ID already has an account"
-On invalid cédula   → block, ask to re-enter
+On invalid cédula   → HTTP 422 `{ error }`; block and ask to re-enter
 ```
 The raw cédula lives only in the request body and in memory during validation. Only the
 hash is persisted.
@@ -241,11 +243,11 @@ RPC get_alert_matches(incident_id):
    alert_rules (enabled, severity ≥ min_severity, st_dwithin(location, center, radius_meters))
    ⨝ whatsapp_config (enabled) ⨝ emergency_contacts (opt_in_status = 'accepted')
         ↓
-for each match → MessagingGateway.sendWhatsApp({ to, template, params })  (Hermes)
+for each match → MessagingGateway.sendWhatsApp({ to, kind, context })  (Hermes)
         ↓
 record in whatsapp_dispatch_log (unique per incident+contact → idempotent)
 
-Manual SOS: client → proximity-dispatcher with an SOS template → same fan-out to my contacts.
+Manual SOS: client → proximity-dispatcher `{ type: "sos", location: { lat, lng } }` → same fan-out.
 ```
 Adding a contact first sends a WhatsApp **opt-in** ("responde SÍ" / "BAJA"); only `accepted`
 contacts are ever messaged. See [ADR-017](DECISIONS.md) and [DATA-MODEL §9](DATA-MODEL.md#9-whatsapp--sos-migration-0002).
@@ -280,16 +282,20 @@ Concretely:
 - The OpenAI API key exists **only** in Edge Function secrets. The browser gets an
   ephemeral client secret.
 - `agent-tools` never trusts a `user_id` in the arguments — it calls `supabase.auth.getUser()`.
-- Any state-changing tool (`confirm_incident`, future `mark_resolved`) re-checks ownership/role.
-- RLS: a user reads only their own `profiles` row; incidents are readable by authenticated
-  users but writable only with `reporter_id = auth.uid()`.
+- `confirm_incident` is a narrowly granted privileged transaction: it derives `auth.uid()`,
+  validates inputs, locks the target incident, and is executable only by `authenticated`.
+- RLS + column privileges: a user reads only their own `profiles` row and can edit only
+  `display_name`; incidents are readable by authenticated users and directly insertable only
+  with `reporter_id = auth.uid()`. Identity/trust and incident state/counts are server-owned.
 - Storage: authenticated upload to own prefix; reads via public bucket or signed URLs
   (⚠️ photos may contain plates/faces — acceptable for the demo, flagged as a real-world concern).
 - Safety layer: `whatsapp_config`, `emergency_contacts`, and `alert_rules` are **owner-only**
   under RLS — no user (or the agent) can read another's contacts or phone numbers. A contact is
   messaged only after explicit WhatsApp **opt-in** (`opt_in_status = 'accepted'`).
   `proximity-dispatcher` runs with the **service role** (bypasses RLS, like seed) precisely
-  because it must fan out across many users' rules on a single INSERT.
+  because it must fan out across many users' rules on a single INSERT. Database calls require
+  `x-pulso-webhook-secret`; SOS calls require a valid user JWT. Each contact send is isolated so
+  one Hermes failure cannot abort later accepted contacts.
 
 ## 6. Configuration
 
@@ -316,16 +322,16 @@ Nothing hardcoded. All tunables are environment variables.
 | `INCIDENT_TTL_HOURS` | Edge secret | Incident expiry (adapter `create()` path; DB default 24h) |
 | `CONFIRM_THRESHOLD` / `DISPUTE_THRESHOLD` | Edge secret | Votes needed to flip status (passed to `confirm_incident`) |
 | `TRUST_VERIFIED_BONUS` / `TRUST_PER_CONFIRMED` / `TRUST_PER_DISPUTED` | Edge secret | Trust-score weights (helper not wired yet) |
-| `HERMES_API_URL` / `_API_KEY` | Edge secret | WhatsApp gateway (Hermes) endpoint + key — safety layer |
-| `HERMES_WHATSAPP_FROM` | Edge secret | WhatsApp sender number/id for outbound sends |
-| `WHATSAPP_PROXIMITY_TEMPLATE` / `WHATSAPP_SOS_TEMPLATE` | Edge secret | Hermes template names |
+| `HERMES_WEBHOOK_URL` / `_WEBHOOK_SECRET` | Edge secret | Hermes alert webhook + HMAC signing secret |
+| `PROXIMITY_WEBHOOK_SECRET` | Edge secret | Authenticates the database webhook invoking the dispatcher |
 | `TIMEZONE` / `DEFAULT_LANGUAGE` | Edge secret | Locale (`America/Guayaquil`, `es`) |
 
 ## 7. Deployment
 - **Frontend:** Vercel (connect the repo, set `NEXT_PUBLIC_*` env, deploy).
 - **Backend:** Supabase Cloud — apply migrations (`0001_init`, `0002_whatsapp_sos`), deploy the
   five Edge Functions, set secrets. For the safety layer, wire the DB trigger/webhook on
-  `incidents` INSERT → `proximity-dispatcher` and set the `HERMES_*` secrets.
+  `incidents` INSERT → `proximity-dispatcher`, include `x-pulso-webhook-secret`, and set the
+  Hermes webhook/signing secrets plus the independent proximity-webhook secret.
 - **Demo devices:** at least two (phone + laptop) to show the collaborative live map.
 
 ## 8. Code architecture — pragmatic hexagonal (ports & adapters)

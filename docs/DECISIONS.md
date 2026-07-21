@@ -159,16 +159,20 @@ is what reaches a user with the app closed.
 only reach a user with the app open. For a personal-safety layer we want a message that
 lands even when nobody is looking at Pulso, plus a way to alert others on your behalf.
 **Decision:** Add a **fifth seam** to the four in [ADR-014](#adr-014--pragmatic-hexagonal-ports--adapters-not-full-hexagonal):
-a **`MessagingGateway`** port (`sendWhatsApp({ to, template, params })`) with a
-**`HermesWhatsAppGateway`** adapter (env: `HERMES_API_URL`, `HERMES_API_KEY`,
-`HERMES_WHATSAPP_FROM`). A new Edge Function **`proximity-dispatcher`** runs on incident
+  a **`MessagingGateway`** port (`sendWhatsApp({ to, kind, context })`) with a
+  **`HermesWhatsAppGateway`** adapter that invokes a signed Hermes alert webhook
+  (`HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_SECRET`). A new Edge Function
+  **`proximity-dispatcher`** runs on incident
 INSERT (via DB trigger/webhook), evaluates every user's `alert_rules` (PostGIS distance ≤
 `radius_meters` **and** severity ≥ `min_severity`) and enqueues WhatsApp sends to that user's
 **accepted** `emergency_contacts` through the port. A manual **SOS** button calls the same
-dispatch path with an SOS template. Adding a contact triggers a WhatsApp **opt-in** ("responde
+  dispatch path with the frozen `{ type: "sos", location: { lat, lng } }` request. The database
+  webhook itself is authenticated with `PROXIMITY_WEBHOOK_SECRET`. Adding a contact triggers a WhatsApp **opt-in** ("responde
 SÍ" to accept / "BAJA" to opt out); status is tracked (`pending`/`accepted`/`declined`) and
-only accepted contacts are ever messaged. New tables land in migration `0002_whatsapp_sos.sql`
-(see [DATA-MODEL §9](DATA-MODEL.md#9-whatsapp--sos-migration-0002)).
+  only accepted contacts are ever messaged. New tables land in migration `0002_whatsapp_sos.sql`
+  (see [DATA-MODEL §9](DATA-MODEL.md#9-whatsapp--sos-migration-0002)).
+  The checked-in scaffold still uses the legacy `HERMES_API_*` adapter; C1 performs the adapter
+  swap. Webhook authentication and per-contact failure isolation apply before and after that swap.
 **Consequences:** Reuses the ports & adapters pattern — the gateway is swappable behind
 `MessagingGateway` (only `HermesWhatsAppGateway` is implemented; a logging fake for local
 dev remains an option) and the dispatcher owns the fan-out so

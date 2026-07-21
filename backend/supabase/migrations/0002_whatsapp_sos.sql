@@ -88,6 +88,26 @@ create policy "dispatch_log - read own" on public.whatsapp_dispatch_log
       and ec.owner_id = (select auth.uid())
   ));
 
+-- Explicit Data API privileges. Consent/verification fields remain server-owned.
+revoke all on public.whatsapp_config, public.emergency_contacts, public.alert_rules,
+  public.whatsapp_dispatch_log from anon, authenticated;
+
+grant select on public.whatsapp_config, public.emergency_contacts, public.alert_rules,
+  public.whatsapp_dispatch_log to authenticated;
+
+grant insert (user_id, enabled, phone_e164) on public.whatsapp_config to authenticated;
+grant update (enabled, phone_e164) on public.whatsapp_config to authenticated;
+
+grant insert (owner_id, display_name, phone_e164)
+  on public.emergency_contacts to authenticated;
+grant update (display_name, phone_e164)
+  on public.emergency_contacts to authenticated;
+
+grant insert (user_id, min_severity, radius_meters, center, channel, enabled)
+  on public.alert_rules to authenticated;
+grant update (min_severity, radius_meters, center, channel, enabled)
+  on public.alert_rules to authenticated;
+
 -- ============================================================================
 -- get_alert_matches — canonical matcher (DATA-MODEL §9). Flat (user, contact, phone) rows.
 -- Called by proximity-dispatcher with the service role (bypasses RLS to fan out).
@@ -115,6 +135,10 @@ as $$
     on ec.owner_id = r.user_id and ec.opt_in_status = 'accepted'
   where i.id = target_incident;
 $$;
+
+-- Internal matcher: callable only by the service-role dispatcher.
+revoke all on function public.get_alert_matches(uuid) from public, anon, authenticated;
+grant execute on function public.get_alert_matches(uuid) to service_role;
 
 -- (find_alert_recipients shim removed — the adapter now calls get_alert_matches directly.)
 

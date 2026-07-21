@@ -4,8 +4,8 @@
 
 Canonical schema for Pulso. The SQL below is runnable: paste it into a Supabase migration
 (`backend/supabase/migrations/0001_init.sql`) and run `supabase db push`. It follows Supabase
-conventions — PostGIS lives in the `extensions` schema, and functions use
-`security invoker` with `set search_path = ''`.
+conventions — PostGIS lives in the `extensions` schema, functions pin
+`search_path = ''`, and privileged RPCs have explicit execute grants.
 
 ---
 
@@ -92,13 +92,13 @@ alter table public.profiles                enable row level security;
 alter table public.incidents               enable row level security;
 alter table public.incident_confirmations  enable row level security;
 
--- profiles: a user sees and edits ONLY their own row
+-- profiles: a user sees only their own row; only display_name is client-editable
 create policy "own profile - select" on public.profiles
-  for select using ((select auth.uid()) = id);
-create policy "own profile - upsert" on public.profiles
-  for insert with check ((select auth.uid()) = id);
+  for select to authenticated using ((select auth.uid()) = id);
 create policy "own profile - update" on public.profiles
-  for update using ((select auth.uid()) = id);
+  for update to authenticated
+  using ((select auth.uid()) = id)
+  with check ((select auth.uid()) = id);
 
 -- incidents: any authenticated user reads active incidents
 create policy "incidents - read active" on public.incidents
@@ -110,16 +110,16 @@ create policy "incidents - insert own" on public.incidents
   for insert to authenticated
   with check (reporter_id = (select auth.uid()));
 
--- incidents: a user may update only their own report (P1: moderators added later)
-create policy "incidents - update own" on public.incidents
-  for update to authenticated
-  using (reporter_id = (select auth.uid()));
+-- Direct confirmation-table access and incident updates are intentionally absent.
 
--- confirmations: insert as self, read your own
-create policy "confirmations - insert own" on public.incident_confirmations
-  for insert to authenticated with check (user_id = (select auth.uid()));
-create policy "confirmations - read own" on public.incident_confirmations
-  for select to authenticated using (user_id = (select auth.uid()));
+revoke all on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
+grant update (display_name) on public.profiles to authenticated;
+
+revoke all on public.incidents from anon, authenticated;
+grant select, insert on public.incidents to authenticated;
+
+revoke all on public.incident_confirmations from anon, authenticated;
 ```
 
 > Seed and Edge Functions using the **service role** bypass RLS; that's expected. RLS
@@ -228,7 +228,7 @@ create or replace function public.confirm_incident(
 )
 returns table (id uuid, confirmations integer, status text)
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 declare
@@ -241,6 +241,14 @@ begin
   end if;
   if kind not in ('confirm','dispute') then
     raise exception 'invalid kind: %', kind;
+  end if;
+  if confirm_threshold < 1 or dispute_threshold < 1 then
+    raise exception 'thresholds must be positive';
+  end if;
+
+  perform 1 from public.incidents i where i.id = target_id for update;
+  if not found then
+    raise exception 'incident not found';
   end if;
 
   insert into public.incident_confirmations (incident_id, user_id, kind)
@@ -267,6 +275,18 @@ begin
   return query select i.id, i.confirmations, i.status from public.incidents i where i.id = target_id;
 end;
 $$;
+
+revoke all on function public.confirm_incident(uuid, text, integer, integer) from public, anon;
+grant execute on function public.confirm_incident(uuid, text, integer, integer) to authenticated;
+
+-- Functions are not public-by-default API. Grant only the authenticated calls Pulso uses.
+revoke all on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  from public, anon;
+grant execute on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  to authenticated;
+
+revoke all on function public.get_incident_details(uuid) from public, anon;
+grant execute on function public.get_incident_details(uuid) to authenticated;
 ```
 
 ## 6. Storage bucket
@@ -331,7 +351,7 @@ end $$;
 
 The optional safety layer ([ADR-017](DECISIONS.md)). Paste this into a second migration
 (`backend/supabase/migrations/0002_whatsapp_sos.sql`) and `db push`. Same Supabase conventions as
-`0001`: RLS **owner-only**, functions `security invoker` with `set search_path = ''`.
+`0001`: owner-scoped RLS, explicit column privileges, and functions with `set search_path = ''`.
 
 ```sql
 -- whatsapp_config: per-user WhatsApp opt-in + verified own phone
@@ -416,6 +436,21 @@ create policy "dispatch_log - read own" on public.whatsapp_dispatch_log
     where ec.id = whatsapp_dispatch_log.contact_id
       and ec.owner_id = (select auth.uid())
   ));
+
+revoke all on public.whatsapp_config, public.emergency_contacts, public.alert_rules,
+  public.whatsapp_dispatch_log from anon, authenticated;
+grant select on public.whatsapp_config, public.emergency_contacts, public.alert_rules,
+  public.whatsapp_dispatch_log to authenticated;
+grant insert (user_id, enabled, phone_e164) on public.whatsapp_config to authenticated;
+grant update (enabled, phone_e164) on public.whatsapp_config to authenticated;
+grant insert (owner_id, display_name, phone_e164)
+  on public.emergency_contacts to authenticated;
+grant update (display_name, phone_e164)
+  on public.emergency_contacts to authenticated;
+grant insert (user_id, min_severity, radius_meters, center, channel, enabled)
+  on public.alert_rules to authenticated;
+grant update (min_severity, radius_meters, center, channel, enabled)
+  on public.alert_rules to authenticated;
 ```
 
 > `proximity-dispatcher` runs with the **service role** and bypasses RLS to fan out across many
@@ -451,6 +486,9 @@ as $$
     on ec.owner_id = r.user_id and ec.opt_in_status = 'accepted'
   where i.id = target_incident;
 $$;
+
+revoke all on function public.get_alert_matches(uuid) from public, anon, authenticated;
+grant execute on function public.get_alert_matches(uuid) to service_role;
 ```
 
 ### Notes / trade-offs (safety layer)

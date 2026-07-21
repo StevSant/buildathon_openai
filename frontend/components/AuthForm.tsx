@@ -48,13 +48,19 @@ export default function AuthForm() {
 
     // Non-2xx responses use the frozen { error } envelope. This is where an already-used
     // cédula is surfaced without disclosing any account details.
-    if (!response.ok) {
-      throw new Error(body.error ?? "No pudimos verificar tu cédula");
+    if (
+      !response.ok ||
+      body.verified !== true ||
+      (body.method !== "registry" && body.method !== "algorithmic")
+    ) {
+      throw new Error(
+        body.error ?? body.reason ?? "No pudimos verificar tu cédula",
+      );
     }
 
     return {
-      verified: Boolean(body.verified),
-      method: body.method ?? "algorithmic",
+      verified: true,
+      method: body.method,
       reason: body.reason,
     };
   }

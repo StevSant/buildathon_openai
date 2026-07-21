@@ -65,11 +65,14 @@ lane owns the tables, RLS policies, and RPC bodies.
 |---|---|---|
 | `get_nearby_incidents` | `user_lat` float, `user_long` float, `radius_meters` int (default 3000), `filter_category` text\|null | rows of `NearbyIncident` (≤20, ordered by distance) |
 | `get_incident_details` | `target_id` uuid | one anonymous `IncidentDetails` (verification badge only; no reporter name or cédula) |
-| `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }` |
+| `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }`; authenticated-only restricted privileged RPC |
 
 ### 3.3 Table writes (RLS-guarded — client writes only its own rows)
 - **Publish incident:** `insert into incidents` with `{ reporter_id = auth.uid(), title, description, category, severity, location (geography point via st_point(lng,lat)), photo_path, expires_at }`.
-- **Safety config (owner-only CRUD):** `whatsapp_config`, `emergency_contacts`, `alert_rules`.
+- **Safety config (owner-only, column-limited):** clients may edit settings/contact details,
+  but never `whatsapp_config.verified`, `emergency_contacts.opt_in_status`, or dispatch logs.
+- **Server-owned:** profile identity/trust fields, incident status/confirmation counts, and
+  `incident_confirmations` rows. Clients reach voting only through `confirm_incident`.
 
 ### 3.4 Realtime (live map + notifications both subscribe)
 ```ts
@@ -93,11 +96,11 @@ from the JWT — **never** trust a `user_id` in the body.
 
 | Function | Request body | Response |
 |---|---|---|
-| `verify-identity` | `{ cedula: string }` | `{ verified: true, method: VerificationMethod, profile: Profile }` \| `{ verified: false, reason: string }` |
+| `verify-identity` | `{ cedula: string }` | success: `{ verified: true, method: VerificationMethod, profile: Profile }`; invalid identity: HTTP 422 `{ error }` |
 | `analyze-report` | `{ photo_path: string }` | `{ category: Category, severity: Severity, title: string, description: string }` |
 | `create-realtime-session` | `{ personaId: 'cerca' \| 'ruta', context?: { lat?: number, lng?: number } }` | `{ clientSecret: string, expiresAt: string, model: string, voice: string }` |
 | `agent-tools` | `{ tool: 'get_nearby_incidents' \| 'get_incident_details' \| 'confirm_incident', arguments: object }` | tool-specific JSON (same shapes as §3.2) |
-| `proximity-dispatcher` | trigger-driven on incident insert; **manual SOS:** `{ type: 'sos', location: { lat: number, lng: number } }` | `{ dispatched: number }` |
+| `proximity-dispatcher` | incident webhook with `x-pulso-webhook-secret`; **manual SOS:** `{ type: 'sos', location: { lat: number, lng: number } }` with user JWT | `{ dispatched: number }` (successful sends only; one failed contact does not abort later contacts) |
 
 Error envelope (all functions): non-2xx → `{ error: string }`.
 
@@ -131,7 +134,8 @@ Bridge flow (frontend): OpenAI `response.function_call_arguments.done` → POST 
 **Backend (Supabase Edge secrets — never shipped to the browser):**
 `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_REALTIME_MODEL`, `OPENAI_VISION_MODEL`,
 `OPENAI_REALTIME_VOICE`, `CEDULA_HASH_PEPPER`, `IDENTITY_VERIFY_API_URL`,
-`IDENTITY_VERIFY_API_KEY`, `HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_SECRET`, `MAX_RADIUS_METERS`,
+`IDENTITY_VERIFY_API_KEY`, current `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_WHATSAPP_FROM`,
+future C1 `HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_SECRET`, `PROXIMITY_WEBHOOK_SECRET`, `MAX_RADIUS_METERS`,
 `DEFAULT_RADIUS_METERS`, `INCIDENT_TTL_HOURS`, `CONFIRM_THRESHOLD`, `DISPUTE_THRESHOLD`,
 `TRUST_VERIFIED_BONUS`, `TRUST_PER_CONFIRMED`, `TRUST_PER_DISPUTED`, `TIMEZONE`,
 `DEFAULT_LANGUAGE`.
