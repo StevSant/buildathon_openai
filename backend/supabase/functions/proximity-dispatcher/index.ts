@@ -31,9 +31,11 @@ Deno.serve(async (req) => {
       type?: string;
       location?: { lat?: number; lng?: number };
       optin?: { contactId?: string };
+      verifyWhatsapp?: boolean;
     };
 
-    const isUserRequest = Boolean(body.optin?.contactId) || body.type === "sos";
+    const isUserRequest =
+      Boolean(body.optin?.contactId) || body.type === "sos" || body.verifyWhatsapp === true;
     let ownerId: string | undefined;
     if (isUserRequest) {
       const { data } = await createUserClient(req).auth.getUser();
@@ -63,6 +65,25 @@ Deno.serve(async (req) => {
       cedulaHashPepper: env.cedulaHashPepper ?? "",
     });
     const dispatch = makeDispatchProximityAlerts({ incidents, profiles, messaging });
+
+    // Self opt-in: confirm the user's OWN WhatsApp number (whatsapp_config), not an
+    // emergency contact. Sends the confirmation and marks the number verified (demo path).
+    if (body.verifyWhatsapp) {
+      const { data: cfg, error } = await service
+        .from("whatsapp_config")
+        .select("phone_e164")
+        .eq("user_id", ownerId!)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!cfg?.phone_e164) throw new Error("no hay número de WhatsApp configurado");
+
+      const delivery = await messaging.sendWhatsApp({ to: cfg.phone_e164, kind: "optin" });
+      await service.from("whatsapp_config").update({ verified: true }).eq("user_id", ownerId!);
+      return Response.json(
+        { dispatched: delivery.status === "failed" ? 0 : 1 },
+        { headers: corsHeaders },
+      );
+    }
 
     if (body.optin?.contactId) {
       const { data: contact, error } = await service

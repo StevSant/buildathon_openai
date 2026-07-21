@@ -2,10 +2,17 @@
 
 It maps a WhatsApp sender to a Pulso account, mints a short-lived authenticated
 Supabase JWT, and forwards calls to the frozen `agent-tools` Edge Function.
+
+DEMO MODE (PULSO_DEMO_MODE=1): reads (`get_nearby_incidents`, `get_incident_details`)
+return public civic data around a fixed venue center using the service role directly
+against the PostGIS RPCs — no sender, no whatsapp_config, no alert_rules needed. This
+is the documented fallback for when Hermes does not yet surface the WhatsApp sender to
+tool calls. Writes (`confirm_incident`) still require a resolved identity.
 """
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -19,10 +26,21 @@ SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_JWT_SECRET = os.environ["SUPABASE_JWT_SECRET"]
 SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
+# Demo mode: skip the per-user identity chain for reads.
+DEMO_MODE = os.environ.get("PULSO_DEMO_MODE", "").strip() in ("1", "true", "yes")
+DEMO_LAT = float(os.environ.get("PULSO_DEFAULT_LAT", "-1.05458"))   # Portoviejo centro
+DEMO_LNG = float(os.environ.get("PULSO_DEFAULT_LNG", "-80.45445"))
+
 mcp = FastMCP("pulso")
 
 
+def _log(message: str) -> None:
+    """MCP stdio servers must log to stderr — stdout carries the protocol."""
+    print(f"[pulso-mcp] {message}", file=sys.stderr, flush=True)
+
+
 def _normalize_sender(sender: str) -> str:
+    _log(f"tool called with sender={sender!r}")
     digits = "".join(char for char in sender if char.isdigit())
     if not 8 <= len(digits) <= 15:
         raise ValueError("No pude validar el número de WhatsApp.")
@@ -54,6 +72,55 @@ def _request_json(url: str, headers: dict[str, str], data: bytes | None = None) 
         raise ValueError(f"Pulso no pudo completar la consulta ({error.code}): {detail}") from error
     except urllib.error.URLError as error:
         raise ValueError("No pude conectar con Pulso en este momento.") from error
+
+
+def _rpc_service(name: str, args: dict[str, object]) -> object:
+    """Call a PostGIS RPC directly with the service role (demo reads, public data)."""
+    return _request_json(
+        f"{SUPABASE_URL}/rest/v1/rpc/{name}",
+        {
+            "content-type": "application/json",
+            "apikey": SERVICE_KEY,
+            "authorization": f"Bearer {SERVICE_KEY}",
+        },
+        json.dumps(args).encode("utf-8"),
+    )
+
+
+def _safe_comments(incident_id: str) -> object:
+    """Community comments for an incident, anonymous shape (id, body, created_at,
+    author_verified). Read directly with the service role: the get_incident_comments RPC
+    gates reads on auth.uid(), which this shim (no end-user JWT) does not have. Only
+    anonymous fields are selected — author_id is never exposed. Best-effort: returns []
+    on failure so the incident details still work even if comments are unavailable."""
+    try:
+        query = urllib.parse.urlencode(
+            {
+                "incident_id": f"eq.{incident_id}",
+                "select": "id,body,created_at,author:profiles(verified)",
+                "order": "created_at.asc",
+                "limit": "100",
+            }
+        )
+        rows = _request_json(
+            f"{SUPABASE_URL}/rest/v1/incident_comments?{query}",
+            {"apikey": SERVICE_KEY, "authorization": f"Bearer {SERVICE_KEY}"},
+        )
+        if not isinstance(rows, list):
+            return []
+        return [
+            {
+                "id": row.get("id"),
+                "body": row.get("body"),
+                "created_at": row.get("created_at"),
+                "author_verified": bool((row.get("author") or {}).get("verified")),
+            }
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    except Exception as error:  # noqa: BLE001 - comments must never break the details call
+        _log(f"comments unavailable for {incident_id}: {error}")
+        return []
 
 
 def _resolve_user_id(sender: str) -> str:
@@ -116,11 +183,22 @@ def _identity(sender: str) -> tuple[str, str]:
 
 @mcp.tool()
 def get_nearby_incidents(
-    sender: str,
+    sender: str = "",
     radius_meters: int = 3000,
     filter_category: str | None = None,
 ) -> object:
-    """Returns active incidents near the sender's saved Pulso alert-rule location."""
+    """Returns active incidents near the user (or near the venue center in demo mode)."""
+    if DEMO_MODE:
+        _log("demo mode: nearby incidents around venue center via service role")
+        return _rpc_service(
+            "get_nearby_incidents",
+            {
+                "user_lat": DEMO_LAT,
+                "user_long": DEMO_LNG,
+                "radius_meters": radius_meters,
+                "filter_category": filter_category,
+            },
+        )
     user_id, bearer = _identity(sender)
     lat, lng = _resolve_alert_center(user_id)
     return _call_agent_tools(
@@ -136,15 +214,24 @@ def get_nearby_incidents(
 
 
 @mcp.tool()
-def get_incident_details(sender: str, incident_id: str) -> object:
-    """Returns the public details of one incident UUID."""
+def get_incident_details(incident_id: str, sender: str = "") -> object:
+    """One incident's details plus community comments. Interpret the comments as a source:
+    summarize what neighbors report, note if the author is a verified member."""
+    if DEMO_MODE:
+        return {
+            "incident": _rpc_service("get_incident_details", {"target_id": incident_id}),
+            "comments": _safe_comments(incident_id),
+        }
     _, bearer = _identity(sender)
-    return _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer)
+    return {
+        "incident": _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer),
+        "comments": _safe_comments(incident_id),
+    }
 
 
 @mcp.tool()
 def confirm_incident(sender: str, incident_id: str, kind: str = "confirm") -> object:
-    """Registers a confirm or dispute vote for an incident."""
+    """Registers a confirm or dispute vote for an incident (requires a linked number)."""
     _, bearer = _identity(sender)
     vote = "dispute" if kind == "dispute" else "confirm"
     return _call_agent_tools("confirm_incident", {"incident_id": incident_id, "kind": vote}, bearer)
