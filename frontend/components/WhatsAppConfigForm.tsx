@@ -49,7 +49,11 @@ export default function WhatsAppConfigForm() {
     void load();
   }, []);
 
-  async function save(nextEnabled: boolean, nextPhone: string): Promise<void> {
+  async function save(
+    nextEnabled: boolean,
+    nextPhone: string,
+    verifyWhatsapp = false,
+  ): Promise<void> {
     const normalizedPhone = nextPhone.trim();
     setError(null);
     if (normalizedPhone && !E164.test(normalizedPhone)) {
@@ -95,6 +99,22 @@ export default function WhatsAppConfigForm() {
       setPhone(saved.phone_e164 ?? "");
       setSavedPhone(saved.phone_e164 ?? "");
       setVerified(Boolean(saved.verified));
+
+      if (!verifyWhatsapp) return;
+
+      const { data: verificationData, error: verificationError } =
+        await supabase.functions.invoke("proximity-dispatcher", {
+          body: { verifyWhatsapp: true },
+        });
+      const dispatched = (verificationData as { dispatched?: number } | null)?.dispatched;
+      if (verificationError || dispatched !== 1) {
+        setError(
+          "Tu número se guardó, pero no pudimos enviar la confirmación por WhatsApp. Intenta de nuevo.",
+        );
+        return;
+      }
+
+      setVerified(true);
     } finally {
       setBusy(false);
     }
@@ -161,7 +181,7 @@ export default function WhatsAppConfigForm() {
           aria-label="Recibir alertas en mi WhatsApp"
           aria-pressed={enabled}
           disabled={busy}
-          onClick={() => void save(!enabled, phone)}
+          onClick={() => void save(!enabled, phone, !enabled)}
           className={enabled ? "toggle on" : "toggle"}
         />
       </div>
