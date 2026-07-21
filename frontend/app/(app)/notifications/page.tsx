@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { NearbyIncident } from "@pulso/core";
+import { IncidentDetailSheet } from "@/components";
 import {
   config,
   decideAlertTier,
@@ -13,6 +14,7 @@ import {
 // has been dismissed. Its subscription intentionally uses the notifications-specific channel.
 export default function NotificationsPage() {
   const [rows, setRows] = useState<NearbyIncident[]>([]);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [location, setLocation] = useState({
     lat: config.defaultLat,
     long: config.defaultLng,
@@ -60,7 +62,7 @@ export default function NotificationsPage() {
   }, [location]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-bg px-3 pb-3 pt-3.5">
+    <div className="relative flex flex-1 flex-col overflow-hidden bg-bg px-3 pb-3 pt-3.5">
       <header className="flex items-center justify-between px-1">
         <h1 className="text-[19px] font-extrabold tracking-[-0.02em]">Notificaciones</h1>
         <button
@@ -128,9 +130,11 @@ export default function NotificationsPage() {
                     : "var(--sev-event)";
 
           return (
-            <article
+            <button
               key={row.id}
-              className="relative flex items-start gap-3 rounded-[14px] border border-line bg-panel p-3 shadow-[0_10px_20px_-20px_#000]"
+              type="button"
+              onClick={() => setSelectedIncidentId(row.id)}
+              className="relative flex w-full items-start gap-3 rounded-[14px] border border-line bg-panel p-3 text-left shadow-[0_10px_20px_-20px_#000] transition-colors hover:bg-panel-2"
             >
               {tier === "sheet" && (
                 <span className="absolute right-3 top-3 h-2 w-2 rounded-full bg-accent shadow-[0_0_9px_var(--accent)]" />
@@ -167,7 +171,7 @@ export default function NotificationsPage() {
                   )}
                 </div>
               </div>
-            </article>
+            </button>
           );
         })}
 
@@ -196,6 +200,13 @@ export default function NotificationsPage() {
           </div>
         )}
       </div>
+
+      {selectedIncidentId && (
+        <IncidentDetailSheet
+          incidentId={selectedIncidentId}
+          onClose={() => setSelectedIncidentId(null)}
+        />
+      )}
     </div>
   );
 }

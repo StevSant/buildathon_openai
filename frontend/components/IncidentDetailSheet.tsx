@@ -41,6 +41,8 @@ export default function IncidentDetailSheet({
   const [details, setDetails] = useState<IncidentDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
+  const [voteMessage, setVoteMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -62,17 +64,43 @@ export default function IncidentDetailSheet({
 
   async function vote(kind: "confirm" | "dispute") {
     setBusy(true);
+    setVoteError(null);
+    setVoteMessage(null);
     try {
-      await confirmIncident(incidentId, kind);
-      onClose();
+      const result = await confirmIncident(incidentId, kind);
+      setDetails((current) =>
+        current
+          ? {
+              ...current,
+              confirmations: result.confirmations,
+              status: result.status,
+            }
+          : current,
+      );
+      setVoteMessage(
+        kind === "confirm"
+          ? result.status === "confirmed"
+            ? "La comunidad alcanzó el nivel de confianza para confirmarlo."
+            : "Tu confirmación fue registrada. La comunidad seguirá validando este incidente."
+          : "Tu desacuerdo fue registrado para revisión comunitaria.",
+      );
     } catch {
-      setHasError(true);
+      setVoteError("No pudimos registrar tu voto. Intenta de nuevo.");
     } finally {
       setBusy(false);
     }
   }
 
   const color = details ? CATEGORY_COLOR[details.category] : "var(--accent)";
+  const trustLabel = !details
+    ? "Cargando confianza"
+    : details.status === "confirmed"
+      ? "Confirmado por la comunidad"
+      : details.status === "disputed"
+        ? "En disputa comunitaria"
+        : details.confirmations > 0
+          ? "En revisión comunitaria"
+          : "Aún sin confirmaciones";
 
   return (
     <section
@@ -164,6 +192,33 @@ export default function IncidentDetailSheet({
               <span className="font-bold text-ink">{details?.confirmations ?? 0} confirmaron.</span>{" "}
               ¿Lo estás viendo? Tu reporte ayuda a verificar la información para toda la comunidad.
             </div>
+            <div
+              aria-live="polite"
+              className="mt-2 rounded-xl border border-line bg-panel-2 px-3 py-3 text-[12px] leading-relaxed text-muted"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-faint">
+                  Confianza comunitaria
+                </span>
+                <span className="rounded-full bg-panel-3 px-2 py-0.5 text-[10px] font-bold text-accent">
+                  {trustLabel}
+                </span>
+              </div>
+              <p className="mt-2">
+                Cada voto se suma a la señal comunitaria; el servidor cambia el estado solo cuando
+                alcanza sus reglas de confianza.
+              </p>
+            </div>
+            {voteMessage && (
+              <p aria-live="polite" className="mt-2 text-[12px] text-ok">
+                {voteMessage}
+              </p>
+            )}
+            {voteError && (
+              <p aria-live="polite" className="mt-2 text-[12px] text-sev-fire">
+                {voteError}
+              </p>
+            )}
           </>
         )}
       </div>
