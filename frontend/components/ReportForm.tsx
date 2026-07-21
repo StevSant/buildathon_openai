@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORY_VALUES, clampSeverity } from "@pulso/core";
 import type { Category, Severity } from "@pulso/core";
-import { config, supabase } from "@/lib";
+import { compressImage, config, supabase } from "@/lib";
+import Icon from "./Icon";
 
 // Report flow: capture/upload a photo, request structured suggestions from analyze-report,
 // let the reporter review every value, then insert the incident under their JWT identity.
@@ -31,6 +32,18 @@ const CATEGORY_LABELS: Record<Category, string> = {
   other: "Otro",
 };
 
+// Color + sprite icon per category, matching the "navegación nocturna" mockup palette.
+const CATEGORY_META: Record<Category, { color: string; icon: string }> = {
+  road_closure: { color: "var(--sev-road)", icon: "ic-road" },
+  accident: { color: "var(--sev-accident)", icon: "ic-car" },
+  flood: { color: "var(--sev-flood)", icon: "ic-water" },
+  fire: { color: "var(--sev-fire)", icon: "ic-fire" },
+  public_event: { color: "var(--sev-event)", icon: "ic-spark" },
+  other: { color: "var(--muted)", icon: "ic-alert" },
+};
+
+const SEVERITY_LEVELS = [1, 2, 3, 4, 5] as const;
+
 type Phase = "idle" | "analyzing" | "ready" | "publishing";
 
 export default function ReportForm() {
@@ -38,16 +51,20 @@ export default function ReportForm() {
   const [photoPath, setPhotoPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [fields, setFields] = useState<AnalyzedFields | null>(null);
+  const [isCategoryConfirmed, setIsCategoryConfirmed] = useState(false);
   const [location, setLocation] = useState<ReportLocation | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const analysisRequestId = useRef(0);
 
   async function onPickPhoto(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    const requestId = ++analysisRequestId.current;
 
     setError(null);
     setFields(null);
+    setIsCategoryConfirmed(false);
     setLocation(null);
     setPhotoPath(null);
     setPreview(URL.createObjectURL(file));
@@ -58,11 +75,15 @@ export default function ReportForm() {
       const uid = userData.user?.id;
       if (!uid) throw new Error("Sin sesión");
 
+      // Re-encode to a bounded JPEG (handles HEIC/huge camera files) so the stored object
+      // always matches its .jpg path and OpenAI vision can read it.
+      const photo = await compressImage(file);
+
       // The bucket path is deliberately relative: <auth.uid()>/<uuid>.jpg.
       const path = `${uid}/${crypto.randomUUID()}.jpg`;
       const { error: uploadError } = await supabase.storage
         .from("report-photos")
-        .upload(path, file, { contentType: file.type });
+        .upload(path, photo, { contentType: "image/jpeg" });
       if (uploadError) throw uploadError;
 
       const { data: sessionData } = await supabase.auth.getSession();
@@ -111,18 +132,28 @@ export default function ReportForm() {
       }
 
       const analysis = (await analysisResponse.json()) as AnalyzedFields;
+      if (requestId !== analysisRequestId.current) return;
       setPhotoPath(path);
       setFields({ ...analysis, severity: clampSeverity(analysis.severity) });
+      setIsCategoryConfirmed(analysis.category !== "other");
       setLocation(resolvedLocation);
       setPhase("ready");
     } catch (reason) {
+      if (requestId !== analysisRequestId.current) return;
       setError(reason instanceof Error ? reason.message : "No pudimos analizar la foto");
       setPhase("idle");
     }
   }
 
+  function chooseCategory(category: Category) {
+    setFields((current) => (current ? { ...current, category } : current));
+    setIsCategoryConfirmed(true);
+  }
+
+  const canPublish = Boolean(fields && photoPath && location && isCategoryConfirmed);
+
   async function publish() {
-    if (!fields || !photoPath || !location) return;
+    if (!canPublish || !fields || !photoPath || !location) return;
 
     setError(null);
     setPhase("publishing");
@@ -157,157 +188,282 @@ export default function ReportForm() {
     }
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
-      <header className="mb-3 flex items-center gap-3">
-        <button
-          type="button"
-          aria-label="Volver"
-          onClick={() => router.back()}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-panel-2 text-xl leading-none text-muted"
-        >
-          ‹
-        </button>
-        <h1 className="text-[17px] font-extrabold tracking-[-0.02em] text-ink">Nuevo reporte</h1>
-      </header>
+  const meta = fields ? CATEGORY_META[fields.category] : null;
 
-      <label className="relative flex h-[124px] cursor-pointer items-center justify-center overflow-hidden rounded-[14px] border border-line bg-[repeating-linear-gradient(-45deg,#17212d_0,#17212d_3px,#141c27_3px,#141c27_7px)] text-[12px] font-semibold text-ink">
+  return (
+    <div className="s-rep">
+      <div className="head">
+        <button type="button" className="iconbtn" aria-label="Volver" onClick={() => router.back()}>
+          <Icon name="ic-back" />
+        </button>
+        <span className="t">Nuevo reporte</span>
+      </div>
+
+      <label className="photo" style={{ display: "block", cursor: "pointer" }}>
         {preview ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={preview} alt="Tu foto" className="h-full w-full object-cover" />
+          <img src={preview} alt="Tu foto" />
         ) : (
-          <span className="rounded-md bg-[#17202bbb] px-2 py-1.5">▣&nbsp; Tu foto</span>
+          <div className="grain" />
         )}
+        <span className="chip tag">
+          <Icon name="ic-cam" />
+          Tu foto
+        </span>
         <input
           type="file"
           accept="image/*"
           capture="environment"
-          className="hidden"
+          style={{ display: "none" }}
           onChange={onPickPhoto}
         />
       </label>
 
       {phase === "analyzing" && (
-        <p className="mt-3 text-center text-[12px] font-semibold text-accent">
-          La IA está analizando tu foto…
+        <div className="ai2">
+          <div className="aihead">
+            <Icon name="ic-spark" />
+            Analizando tu foto…
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p style={{ margin: 0, textAlign: "center", fontSize: 12, color: "var(--sev-fire)" }}>
+          {error}
         </p>
       )}
-      {error && <p className="mt-3 text-center text-[12px] text-sev-fire">{error}</p>}
 
-      {fields && location && (
-        <section className="mt-3 rounded-[14px] border border-line bg-panel px-3.5 py-3">
-          <p className="mb-3 text-[12px] font-bold text-accent">✧&nbsp; La IA analizó tu foto</p>
+      {fields && location && meta && (
+        <div className="ai2">
+          <div className="aihead">
+            <Icon name="ic-spark" />
+            La IA analizó tu foto
+          </div>
 
-          <label className="grid grid-cols-[84px_1fr] items-center gap-2 border-b border-line py-2">
-            <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
-              Categoría
-            </span>
-            <select
-              value={fields.category}
-              onChange={(event) =>
-                setFields({ ...fields, category: event.target.value as Category })
-              }
-              className="justify-self-end rounded-full border-0 bg-[#ffad4d] px-3 py-1 text-[11px] font-bold text-[#251305] outline-none"
-            >
-              {CATEGORY_VALUES.map((value) => (
-                <option key={value} value={value}>
-                  {CATEGORY_LABELS[value]}
+          <div className="row">
+            <span className="lab">Categoría</span>
+            <label style={{ position: "relative", display: "inline-flex" }}>
+              <span className="chip sev" style={{ background: meta.color }}>
+                <Icon name={meta.icon} />
+                {CATEGORY_LABELS[fields.category]}
+              </span>
+              <select
+                aria-label="Categoría"
+                value={isCategoryConfirmed ? fields.category : ""}
+                onChange={(event) => chooseCategory(event.target.value as Category)}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  border: 0,
+                  opacity: 0,
+                  cursor: "pointer",
+                }}
+              >
+                <option value="" disabled>
+                  Elige una categoría
                 </option>
-              ))}
-            </select>
-          </label>
+                {CATEGORY_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {CATEGORY_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-          <label className="grid grid-cols-[84px_1fr] items-center gap-2 border-b border-line py-2">
-            <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
-              Severidad
-            </span>
-            <div className="justify-self-end">
-              <input
-                aria-label="Severidad"
-                type="range"
-                min={1}
-                max={5}
-                value={fields.severity}
-                onChange={(event) =>
-                  setFields({ ...fields, severity: clampSeverity(Number(event.target.value)) })
-                }
-                className="h-2 w-[112px] cursor-pointer accent-[#ff9f45]"
-              />
+          {fields.category === "other" && !isCategoryConfirmed && (
+            <div
+              role="alert"
+              style={{
+                margin: "0 14px 12px",
+                padding: 12,
+                border: "1px solid color-mix(in srgb, var(--sev-road) 55%, var(--line))",
+                borderRadius: 12,
+                background: "color-mix(in srgb, var(--sev-road) 8%, var(--panel-2))",
+              }}
+            >
+              <div style={{ display: "flex", gap: 8, color: "var(--sev-road)" }}>
+                <Icon name="ic-alert" />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800 }}>
+                    La IA no pudo identificar el incidente con seguridad.
+                  </div>
+                  <div style={{ marginTop: 2, fontSize: 11, color: "var(--muted)" }}>
+                    ¿Qué está pasando?
+                  </div>
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 7,
+                  marginTop: 10,
+                }}
+              >
+                {CATEGORY_VALUES.map((category) => {
+                  const option = CATEGORY_META[category];
+                  return (
+                    <button
+                      key={category}
+                      type="button"
+                      aria-pressed={false}
+                      onClick={() => chooseCategory(category)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        minWidth: 0,
+                        padding: "8px 9px",
+                        border: `1px solid color-mix(in srgb, ${option.color} 45%, var(--line))`,
+                        borderRadius: 9,
+                        background: `color-mix(in srgb, ${option.color} 12%, var(--panel))`,
+                        color: "var(--ink)",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        textAlign: "left",
+                      }}
+                    >
+                      <Icon name={option.icon} style={{ color: option.color }} />
+                      <span>{CATEGORY_LABELS[category]}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </label>
+          )}
 
-          <label className="grid grid-cols-[84px_1fr] items-start gap-2 border-b border-line py-2">
-            <span className="pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
-              Título
+          <div className="row">
+            <span className="lab">Severidad</span>
+            <span className="meter" role="group" aria-label="Severidad">
+              {SEVERITY_LEVELS.map((level) => {
+                const isOn = fields.severity >= level;
+                return (
+                  <span
+                    key={level}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Severidad ${level}`}
+                    aria-pressed={isOn}
+                    className={isOn ? "on" : undefined}
+                    style={isOn ? { background: meta.color, cursor: "pointer" } : { cursor: "pointer" }}
+                    onClick={() => setFields({ ...fields, severity: clampSeverity(level) })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setFields({ ...fields, severity: clampSeverity(level) });
+                      }
+                    }}
+                  />
+                );
+              })}
             </span>
+          </div>
+
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <span className="lab">Título</span>
             <input
+              aria-label="Título"
               value={fields.title}
               onChange={(event) => setFields({ ...fields, title: event.target.value })}
-              className="min-w-0 border-0 bg-transparent p-0 text-right text-[13px] font-bold leading-4 text-ink outline-none"
+              className="filled"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 0,
+                outline: "none",
+                background: "transparent",
+                textAlign: "right",
+                fontFamily: "inherit",
+                color: "var(--ink)",
+              }}
             />
-          </label>
+          </div>
 
-          <label className="grid grid-cols-[84px_1fr] items-start gap-2 border-b border-line py-2">
-            <span className="pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
-              Descripción
-            </span>
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <span className="lab">Descripción</span>
             <textarea
+              aria-label="Descripción"
               value={fields.description}
               onChange={(event) => setFields({ ...fields, description: event.target.value })}
               rows={2}
-              className="min-w-0 resize-none border-0 bg-transparent p-0 text-right text-[12px] leading-4 text-muted outline-none"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 0,
+                outline: "none",
+                background: "transparent",
+                resize: "none",
+                textAlign: "right",
+                fontFamily: "inherit",
+                fontSize: 12,
+                lineHeight: 1.35,
+                color: "var(--muted)",
+              }}
             />
-          </label>
+          </div>
 
           {location.isFallback && (
-            <div className="mt-3 rounded-lg border border-[#f4c54255] bg-panel-2 p-2.5">
-              <p className="text-[11px] leading-4 text-sev-road">
+            <div className="field" style={{ gap: 8 }}>
+              <p className="editline" style={{ color: "var(--sev-road)" }}>
+                <Icon name="ic-alert" />
                 No pudimos obtener tu ubicación. Ajusta la ubicación aproximada antes de publicar.
               </p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <label className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
-                  Latitud
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    value={location.lat}
-                    onChange={(event) =>
-                      setLocation({ ...location, lat: Number(event.target.value) })
-                    }
-                    className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 text-[12px] text-ink outline-none"
-                  />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <label className="field">
+                  <span className="lab">Latitud</span>
+                  <span className="input">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="any"
+                      value={location.lat}
+                      onChange={(event) =>
+                        setLocation({ ...location, lat: Number(event.target.value) })
+                      }
+                    />
+                  </span>
                 </label>
-                <label className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
-                  Longitud
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    value={location.lng}
-                    onChange={(event) =>
-                      setLocation({ ...location, lng: Number(event.target.value) })
-                    }
-                    className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 text-[12px] text-ink outline-none"
-                  />
+                <label className="field">
+                  <span className="lab">Longitud</span>
+                  <span className="input">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="any"
+                      value={location.lng}
+                      onChange={(event) =>
+                        setLocation({ ...location, lng: Number(event.target.value) })
+                      }
+                    />
+                  </span>
                 </label>
               </div>
             </div>
           )}
 
-          <p className="mt-3 border-l border-line pl-2 text-[10.5px] leading-4 text-faint">
-            Puedes editar cualquier campo antes de publicar.
-          </p>
-        </section>
+          <div className="editline">
+            <Icon name="ic-chevron" />
+            Puedes editar cualquier campo antes de publicar
+          </div>
+        </div>
       )}
 
       <button
         type="button"
-        disabled={!fields || !location || phase === "publishing"}
+        className="btn primary"
+        style={{ marginTop: "auto" }}
+        disabled={!canPublish || phase === "publishing"}
         onClick={publish}
-        className="mt-auto rounded-[14px] bg-accent px-3 py-3 text-[14px] font-extrabold text-accent-ink shadow-[0_12px_28px_-12px_var(--accent)] disabled:cursor-not-allowed disabled:opacity-45"
       >
-        {phase === "publishing" ? "Publicando…" : "Publicar incidente"}
+        {phase === "publishing"
+          ? "Publicando…"
+          : fields && !isCategoryConfirmed
+            ? "Confirma la categoría"
+            : "Publicar incidente"}
       </button>
       <p className="mb-0 mt-2 text-[11px] leading-relaxed text-faint">
         🔒 Tu reporte es anónimo: otros usuarios nunca ven tu nombre ni tus datos. Tu identidad

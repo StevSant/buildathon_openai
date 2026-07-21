@@ -75,10 +75,12 @@ export class SupabaseIncidentRepository implements IncidentRepository {
       severity: clampSeverity(row.severity),
       status: row.status,
       confirmations: row.confirmations,
+      disputes: Number(row.disputes ?? 0),
       reporter_verified: Boolean(row.reporter_verified),
       created_at: row.created_at,
       lng: row.lng,
       lat: row.lat,
+      photo_path: row.photo_path ?? null,
     };
   }
 

@@ -1,67 +1,80 @@
 "use client";
 
+import type { Category } from "@pulso/core";
+import Icon from "./Icon";
+
+// Category → sprite icon + severity color, mirroring the mockup's palette mapping.
+const CATEGORY_STYLE: Record<Category, { icon: string; color: string }> = {
+  fire: { icon: "ic-fire", color: "var(--sev-fire)" },
+  accident: { icon: "ic-car", color: "var(--sev-accident)" },
+  flood: { icon: "ic-water", color: "var(--sev-flood)" },
+  road_closure: { icon: "ic-road", color: "var(--sev-road)" },
+  public_event: { icon: "ic-spark", color: "var(--sev-event)" },
+  other: { icon: "ic-alert", color: "var(--sev-event)" },
+};
+
 // inDrive-style proximity alert. Raised when a new nearby incident is both severe and
 // close (the "sheet" tier). Shows severity + distance + actions. Fed by Supabase Realtime.
+// `.alert` is position:absolute (bottom:14px in the mockup's own screen); inside the app
+// shell it is offset up to clear the persistent TabBar.
 export default function NotificationBottomSheet({
   title,
+  category,
   distanceMeters,
   ageLabel,
+  verified,
   onViewOnMap,
   onDismiss,
 }: {
   title: string;
+  category: Category;
   distanceMeters: number;
   ageLabel: string;
+  verified: boolean;
   onViewOnMap: () => void;
   onDismiss: () => void;
 }) {
+  const { icon, color } = CATEGORY_STYLE[category];
+
   return (
     <section
+      className="alert"
       aria-label="Alerta cerca de ti"
       aria-live="assertive"
-      className="absolute inset-x-3 bottom-3.5 z-20 rounded-[20px] border border-line bg-panel-2 p-4 shadow-[0_-20px_50px_-20px_#000]"
+      style={{ bottom: "calc(84px + env(safe-area-inset-bottom))" }}
     >
-      <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-line" />
-      <div className="flex items-center gap-3">
-        <span className="flex h-[46px] w-[46px] flex-none items-center justify-center rounded-[14px] bg-sev-fire text-[#08121a]">
-          <svg
-            width={24}
-            height={24}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#08121a"
-            strokeWidth={2.1}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 3c.5 2.8 3.8 4 3.8 8.2A3.8 3.8 0 0 1 8.2 11c0-1 .4-1.9 1-2.6.4 1 1.2 1.5 2 1.5C10.5 8 12 6.2 12 3Z" />
-          </svg>
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-sev-fire">
-            <b className="h-1.5 w-1.5 rounded-full bg-sev-fire shadow-[0_0_8px_var(--sev-fire)]" />
+      <div className="grab dark" />
+      <div className="top">
+        <div className="ai" style={{ background: color }}>
+          <Icon name={icon} />
+        </div>
+        <div className="hd">
+          <div className="kh">
+            <b />
             Alerta cerca de ti
           </div>
-          <div className="mt-1 text-base font-extrabold">{title}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2.5 text-[12px] text-muted">
-            <span>a ~{Math.round(distanceMeters)} m</span>
-            <span>·</span>
-            <span>{ageLabel}</span>
+          <div className="ti">{title}</div>
+          <div className="mt">
+            <span className="mono">a {Math.round(distanceMeters)} m</span>
+            <span className="mono">{ageLabel}</span>
+            {verified && (
+              <span className="badge-ok">
+                <Icon name="ic-check" style={{ width: 12, height: 12, strokeWidth: 2.4 }} />
+                verificado
+              </span>
+            )}
           </div>
         </div>
       </div>
-      <div className="mt-3.5 flex gap-2.5">
-        <button
-          type="button"
-          onClick={onViewOnMap}
-          className="flex w-full items-center justify-center rounded-[14px] bg-accent px-3 py-3 text-sm font-bold text-accent-ink shadow-[0_8px_22px_-10px_var(--accent)] transition-transform active:scale-[0.98]"
-        >
+      <div className="acts">
+        <button type="button" className="btn primary sm" onClick={onViewOnMap}>
           Ver en el mapa
         </button>
         <button
           type="button"
+          className="btn ghost sm"
+          style={{ width: "auto", paddingLeft: 16, paddingRight: 16 }}
           onClick={onDismiss}
-          className="flex w-full items-center justify-center rounded-[14px] border border-line bg-panel-2 px-3 py-3 text-sm font-bold text-ink transition-colors hover:bg-panel-3"
         >
           Descartar
         </button>

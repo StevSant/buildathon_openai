@@ -9,6 +9,9 @@ next-env.d.ts
 .DS_Store
 backend/supabase/.temp
 backend/supabase/.branches
+supabase/.temp
+supabase/.branches
 
 .vercel
 .env*
+.deploy/

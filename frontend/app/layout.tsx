@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { IconSprite } from "@/components";
 import "./globals.css";
 
 // PWA wiring. The manifest and icon files are delivered by a separate asset step —
@@ -42,7 +43,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <link rel="icon" href="/favicon.ico" />
       </head>
-      <body>{children}</body>
+      <body>
+        <IconSprite />
+        {children}
+      </body>
     </html>
   );
 }

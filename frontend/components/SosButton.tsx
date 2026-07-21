@@ -75,16 +75,25 @@ export default function SosButton() {
     setState("idle");
   }
 
-  const label =
+  const title =
     state === "sent"
       ? `Enviado a ${dispatched} ${dispatched === 1 ? "contacto" : "contactos"}`
       : state === "sending"
         ? "Enviando…"
-        : state === "arming"
-          ? "Sigue presionando…"
+        : state === "error"
+          ? "No se pudo enviar"
+          : "SOS · Botón de pánico";
+
+  const detail =
+    state === "arming"
+      ? "Sigue presionando…"
+      : state === "sending"
+        ? "Enviando tu ubicación…"
+        : state === "sent"
+          ? "Tu ubicación se envió a tus contactos"
           : state === "error"
-            ? "No se pudo enviar — reintenta"
-            : "SOS · Botón de pánico";
+            ? "Reintenta manteniendo presionado"
+            : "Mantén presionado para enviar tu ubicación a tus contactos";
 
   return (
     <button
@@ -105,15 +114,10 @@ export default function SosButton() {
       }}
       onBlur={cancelHold}
       aria-describedby="sos-instructions"
-      className="mt-1 flex w-full flex-col items-center gap-1 rounded-2xl border-0 bg-gradient-to-b from-[#FF6B6B] to-[#DE2A2A] px-3 py-3.5 text-white shadow-[0_12px_30px_-12px_#ff4d4d]"
+      className="sosbtn"
     >
-      <b className="flex items-center gap-1.5 text-[15px] font-extrabold tracking-wide">
-        <span className="rounded bg-white/20 px-1 py-0.5 text-[8px] tracking-normal">SOS</span>
-        {label}
-      </b>
-      <small id="sos-instructions" className="text-[10.5px] font-medium opacity-90">
-        Mantén presionado para enviar tu ubicación a tus contactos
-      </small>
+      <b>🆘 {title}</b>
+      <small id="sos-instructions">{detail}</small>
     </button>
   );
 }

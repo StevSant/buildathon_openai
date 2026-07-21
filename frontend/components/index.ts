@@ -1,11 +1,17 @@
 // Barrel for UI components. Screens import from "@/components", never from deep files.
+export { default as Icon } from "./Icon";
+export { default as IconSprite } from "./IconSprite";
 export { default as TabBar } from "./TabBar";
 export { default as AuthForm } from "./AuthForm";
 export { default as AuthGuard } from "./AuthGuard";
 export { default as IncidentMap } from "./IncidentMap";
 export { default as ReportForm } from "./ReportForm";
 export { default as RealtimeAssistant } from "./RealtimeAssistant";
+export { default as AssistantIncidentCards } from "./AssistantIncidentCards";
+export { default as AssistantIncidentDetailCard } from "./AssistantIncidentDetailCard";
+export { default as AssistantIncidentMap } from "./AssistantIncidentMap";
 export { default as IncidentDetailSheet } from "./IncidentDetailSheet";
+export { default as IncidentComments } from "./IncidentComments";
 export { default as NotificationBell } from "./NotificationBell";
 export { default as NotificationToast } from "./NotificationToast";
 export { default as NotificationBottomSheet } from "./NotificationBottomSheet";
@@ -15,3 +21,4 @@ export { default as SosButton } from "./SosButton";
 export { default as EmergencyContactsForm } from "./EmergencyContactsForm";
 export { default as AlertRulesForm } from "./AlertRulesForm";
 export { default as WhatsAppConfigForm } from "./WhatsAppConfigForm";
+export { default as PresentationDeck } from "./PresentationDeck";

@@ -9,6 +9,9 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { getEnv } from "../_shared/env.ts";
 import { userFromJwt } from "../_shared/auth.ts";
 import { createUserClient } from "../_shared/supabase-client.ts";
+import { presentNearbyIncidents } from "./present-nearby-incidents.ts";
+import { presentIncidentDetails } from "./present-incident-details.ts";
+import { presentConfirmation } from "./present-confirmation.ts";
 
 // The tool implementation the browser bridge calls (OpenAI never calls Supabase directly).
 // Router over the three agent tools. Runs with a USER-scoped client so the security-invoker
@@ -67,16 +70,20 @@ Deno.serve(async (req) => {
             { status: 400, headers: corsHeaders },
           );
         }
+        // Effective radius after the MAX_RADIUS_METERS cap (mirrors the repository) so
+        // the presenter's summary tells the model the radius that was actually searched.
+        const radiusMeters = Math.min(
+          typeof args.radius_meters === "number" ? args.radius_meters : env.defaultRadiusMeters,
+          env.maxRadiusMeters,
+        );
         const run = makeGetNearbyIncidents({ incidents });
-        result = await run({
+        const rows = await run({
           lat: args.user_lat,
           long: args.user_long,
-          radiusMeters:
-            typeof args.radius_meters === "number"
-              ? args.radius_meters
-              : env.defaultRadiusMeters,
+          radiusMeters,
           category,
         });
+        result = presentNearbyIncidents(rows, radiusMeters);
         break;
       }
       case "get_incident_details": {
@@ -87,7 +94,7 @@ Deno.serve(async (req) => {
           );
         }
         const run = makeGetIncidentDetails({ incidents });
-        result = await run({ incidentId: args.incident_id });
+        result = presentIncidentDetails(await run({ incidentId: args.incident_id }));
         break;
       }
       case "confirm_incident": {
@@ -104,11 +111,12 @@ Deno.serve(async (req) => {
           );
         }
         const run = makeConfirmIncident({ incidents });
-        result = await run({
+        const outcome = await run({
           userId,
           incidentId: args.incident_id,
           kind: args.kind,
         });
+        result = presentConfirmation(outcome, args.kind);
         break;
       }
       default:

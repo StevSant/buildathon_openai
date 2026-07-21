@@ -34,6 +34,9 @@ export function makeVerifyIdentity({
       if (err instanceof Error && err.message === 'cedula_taken') {
         return { verified: false, reason: 'Esta cédula ya está registrada en otra cuenta.' };
       }
+      if (err instanceof Error && err.message === 'cedula_already_bound') {
+        return { verified: false, reason: 'Esta cuenta ya tiene una cédula vinculada.' };
+      }
       throw err;
     }
   };

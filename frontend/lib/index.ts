@@ -10,7 +10,11 @@ export {
   confirmIncident,
   subscribeToIncidents,
 } from "./incidents";
+export { haversineMeters } from "./distance";
+export { addIncidentComment, getIncidentComments } from "./incident-comments";
 export { REALTIME_TOOLS } from "./realtime-tools";
+export { TOOL_CALL_LABELS } from "./tool-call-labels";
+export { compressImage } from "./compress-image";
 export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";
 export { startRealtimeSession } from "./realtime-agent";
@@ -22,3 +26,8 @@ export type {
   AssistantStatus,
   AssistantCallbacks,
 } from "./realtime-agent";
+export type {
+  AssistantLocation,
+  AssistantTurn,
+  AssistantTurnContent,
+} from "./assistant-conversation";

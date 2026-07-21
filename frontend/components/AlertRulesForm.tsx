@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Icon from "./Icon";
 import { config, supabase } from "@/lib";
 
 interface AlertRule {
@@ -127,43 +128,38 @@ export default function AlertRulesForm() {
   }
 
   return (
-    <section className="rounded-[14px] border border-line bg-panel" aria-labelledby="contact-alerts-title">
-      <h2
-        id="contact-alerts-title"
-        className="px-3.5 pb-1.5 pt-3 text-[10px] font-semibold uppercase tracking-widest text-faint"
-      >
+    <section className="group" aria-labelledby="contact-alerts-title">
+      <div className="gl" id="contact-alerts-title">
         Alertas a contactos · más ajustado
-      </h2>
+      </div>
 
-      <div className="flex items-center justify-between border-t border-line px-3.5 py-3 text-[13px]">
-        <span>Enviar alertas por WhatsApp</span>
+      <div className="item">
+        <span className="lft">
+          <Icon name="ic-chat" />
+          Avisar a mis contactos por WhatsApp
+        </span>
         <button
           type="button"
-          aria-label="Activar alertas por WhatsApp"
+          aria-label="Avisar a mis contactos por WhatsApp"
           aria-pressed={rule.enabled}
           disabled={busy}
           onClick={() => void save({ ...rule, enabled: !rule.enabled })}
-          className={`relative h-[22px] w-[38px] flex-none rounded-full disabled:opacity-60 ${
-            rule.enabled ? "bg-accent" : "bg-line"
-          }`}
-        >
-          <span
-            className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white transition-all ${
-              rule.enabled ? "left-[18px]" : "left-0.5"
-            }`}
-          />
-        </button>
+          className={rule.enabled ? "toggle on" : "toggle"}
+        />
       </div>
 
-      <label className="flex items-center justify-between border-t border-line px-3.5 py-3 text-[13px]">
-        <span>Severidad mínima</span>
+      <label className="item">
+        <span className="lft">
+          <Icon name="ic-fire" />
+          Severidad mínima
+        </span>
         <select
+          className="select"
           value={rule.min_severity}
           disabled={busy}
           onChange={(event) =>
             void save({ ...rule, min_severity: Math.min(5, Math.max(1, Number(event.target.value))) })
           }
-          className="rounded-lg border border-line bg-panel-2 px-2 py-1 font-mono text-[12px] text-ink disabled:opacity-60"
         >
           {[3, 4, 5].map((severity) => (
             <option key={severity} value={severity}>
@@ -173,13 +169,16 @@ export default function AlertRulesForm() {
         </select>
       </label>
 
-      <label className="flex items-center justify-between border-t border-line px-3.5 py-3 text-[13px]">
-        <span>Radio</span>
+      <label className="item">
+        <span className="lft">
+          <Icon name="ic-target" />
+          Radio
+        </span>
         <select
+          className="select"
           value={rule.radius_meters}
           disabled={busy}
           onChange={(event) => void save({ ...rule, radius_meters: Number(event.target.value) })}
-          className="rounded-lg border border-line bg-panel-2 px-2 py-1 font-mono text-[12px] text-ink disabled:opacity-60"
         >
           {[300, 500, 1000].map((radius) => (
             <option key={radius} value={radius}>
@@ -189,11 +188,18 @@ export default function AlertRulesForm() {
         </select>
       </label>
 
-      {error ? <p className="px-3.5 pt-2 text-[11px] text-sev-fire">{error}</p> : null}
-      <p className="px-3.5 py-2.5 text-[10.5px] text-faint">
-        Tus alertas normales usan {Math.round(config.defaultRadiusMeters / 1000)} km — a contactos
-        solo lo muy cercano y grave.
-      </p>
+      {error ? (
+        <p style={{ margin: 0, padding: "8px 13px 0", fontSize: 11, color: "var(--sev-fire)" }}>
+          {error}
+        </p>
+      ) : null}
+
+      <div className="item" style={{ borderTop: 0, paddingTop: 2 }}>
+        <span className="hint">
+          Tus alertas normales usan {Math.round(config.defaultRadiusMeters / 1000)} km — a contactos
+          solo lo muy cercano y grave.
+        </span>
+      </div>
     </section>
   );
 }

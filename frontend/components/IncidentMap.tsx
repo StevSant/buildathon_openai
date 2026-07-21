@@ -1,14 +1,44 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import Map, { Marker, type MapRef } from "react-map-gl/maplibre";
 import type { Category, IncidentStatus, NearbyIncident } from "@pulso/core";
-import { IncidentDetailSheet, NotificationBell } from "@/components";
+import { IncidentDetailSheet, Icon, NotificationBell } from "@/components";
 import { config, getNearbyIncidents, subscribeToIncidents } from "@/lib";
 
 // Map presentation values are intentionally separate from data: the categories come from
-// the frozen domain contract while severity is represented by pin scale and glow.
+// the frozen domain contract, each mapped to its mockup pin color, list icon, and the
+// severity-border class used on the bottom-sheet rows.
+const CATEGORY_PIN: Record<Category, string> = {
+  road_closure: "p-road",
+  accident: "p-acc",
+  flood: "p-flood",
+  fire: "p-fire",
+  public_event: "p-evt",
+  other: "p-acc",
+};
+
+const CATEGORY_ICON: Record<Category, string> = {
+  road_closure: "ic-road",
+  accident: "ic-car",
+  flood: "ic-water",
+  fire: "ic-fire",
+  public_event: "ic-spark",
+  other: "ic-alert",
+};
+
+const CATEGORY_SEV: Record<Category, string> = {
+  road_closure: "sev-road",
+  accident: "sev-acc",
+  flood: "sev-flood",
+  fire: "sev-fire",
+  public_event: "sev-evt",
+  other: "sev-acc",
+};
+
 const CATEGORY_COLOR: Record<Category, string> = {
   road_closure: "var(--sev-road)",
   accident: "var(--sev-accident)",
@@ -27,30 +57,79 @@ const CATEGORY_LABEL: Record<Category, string> = {
   other: "Incidente",
 };
 
-const STATUS_LABEL: Record<IncidentStatus, string> = {
-  provisional: "Provisional",
-  confirmed: "Confirmado",
-  disputed: "En disputa",
-  resolved: "Resuelto",
+// Only two chip styles exist in the mockup; confirmed/resolved read as "settled", the rest
+// as "provisional".
+const STATUS_CHIP: Record<IncidentStatus, { className: string; label: string }> = {
+  provisional: { className: "st-prov", label: "provisional" },
+  confirmed: { className: "st-conf", label: "confirmado" },
+  disputed: { className: "st-prov", label: "en disputa" },
+  resolved: { className: "st-conf", label: "resuelto" },
 };
+
+function formatDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+}
+
+function formatRadius(meters: number): string {
+  return meters >= 1000 ? `${meters / 1000} km` : `${meters} m`;
+}
+
+function formatRelativeTime(iso: string): string {
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "ahora";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  return `hace ${Math.floor(hours / 24)} d`;
+}
 
 // The post-login home map: fetches nearby incidents, stays current through its own Realtime
 // channel, and shows every incident because the RPC guarantees lng/lat on each row.
 export default function IncidentMap() {
   const mapRef = useRef<MapRef | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
   const [center, setCenter] = useState({
     lat: config.defaultLat,
     long: config.defaultLng,
   });
   const [incidents, setIncidents] = useState<NearbyIncident[]>([]);
+  const [newIds, setNewIds] = useState<ReadonlySet<string>>(new Set());
+  const knownIdsRef = useRef<Set<string> | null>(null);
+  const [loading, setLoading] = useState(true);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const [sheetHidden, setSheetHidden] = useState(false);
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const sheetPointerStartY = useRef<number | null>(null);
+  const sheetDragDistance = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
       const rows = await getNearbyIncidents({ lat: center.lat, long: center.long });
       setIncidents(rows);
+
+      // A pin that arrives after the first load "drops" with a ripple for a few seconds,
+      // mirroring the mockup's recién-publicado animation.
+      const known = knownIdsRef.current;
+      if (known) {
+        const fresh = rows.filter((row) => !known.has(row.id)).map((row) => row.id);
+        if (fresh.length > 0) {
+          setNewIds((previous) => new Set([...previous, ...fresh]));
+          setTimeout(() => {
+            setNewIds((previous) => {
+              const next = new Set(previous);
+              fresh.forEach((id) => next.delete(id));
+              return next;
+            });
+          }, 8000);
+        }
+      }
+      knownIdsRef.current = new Set(rows.map((row) => row.id));
     } catch {
       // Keep the last successful map state when connectivity is temporarily unavailable.
+    } finally {
+      setLoading(false);
     }
   }, [center.lat, center.long]);
 
@@ -82,8 +161,38 @@ export default function IncidentMap() {
     };
   }, [refresh]);
 
+  // The mic FAB floats just above whichever bottom sheet is mounted; measuring keeps it
+  // clear of the sheet regardless of how many incident rows render.
+  useEffect(() => {
+    setSheetHeight(sheetRef.current?.offsetHeight ?? 0);
+  }, [incidents, loading, selectedIncidentId, sheetHidden]);
+
+  const activeCount = incidents.length;
+  const fabBottom = sheetHidden ? 24 : Math.max(24, sheetHeight - sheetDragY + 16);
+
+  function releaseSheetHandle(): void {
+    const shouldHide = sheetDragDistance.current > (sheetRef.current?.offsetHeight ?? 0) / 4;
+    setSheetHidden(shouldHide);
+    setSheetDragY(0);
+    sheetPointerStartY.current = null;
+    sheetDragDistance.current = 0;
+  }
+
+  function startSheetDrag(event: ReactPointerEvent<HTMLDivElement>): void {
+    sheetPointerStartY.current = event.clientY;
+    sheetDragDistance.current = 0;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function dragSheet(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (sheetPointerStartY.current === null) return;
+    const distance = Math.max(0, event.clientY - sheetPointerStartY.current);
+    sheetDragDistance.current = distance;
+    setSheetDragY(distance);
+  }
+
   return (
-    <section className="relative flex-1 overflow-hidden bg-bg" aria-label="Mapa de incidentes">
+    <section className="s-map" aria-label="Mapa de incidentes">
       <Map
         ref={mapRef}
         reuseMaps
@@ -96,173 +205,193 @@ export default function IncidentMap() {
         style={{ position: "absolute", inset: 0 }}
       >
         <Marker latitude={center.lat} longitude={center.long} anchor="center">
-          <span className="relative flex h-11 w-11 items-center justify-center" aria-label="Tu ubicación">
-            <span className="absolute inset-0 rounded-full border border-accent/50 bg-accent/10" />
-            <span className="absolute h-6 w-6 rounded-full border-2 border-accent bg-[rgba(10,30,30,0.9)] shadow-[0_0_24px_var(--accent)]" />
-            <span className="relative h-2.5 w-2.5 rounded-full bg-accent" />
+          <span
+            className="me"
+            aria-label="Tu ubicación"
+            // display:block — the mockup positions these spans absolutely (block box), but
+            // inside a Marker they are static inline spans, and inline boxes collapse to
+            // 0×0 (width/height are ignored), making the dot invisible.
+            style={{ display: "block", position: "relative", left: "auto", top: "auto", margin: 0 }}
+          >
+            <b />
           </span>
         </Marker>
 
-        {incidents.map((incident) => {
-          const color = CATEGORY_COLOR[incident.category];
-          const markerSize = incident.severity >= 4 ? "h-10 w-10" : "h-8 w-8";
-
-          return (
-            <Marker
-              key={incident.id}
-              latitude={incident.lat}
-              longitude={incident.lng}
-              anchor="bottom"
-              onClick={(event) => {
-                event.originalEvent.stopPropagation();
-                setSelectedIncidentId(incident.id);
+        {incidents.map((incident) => (
+          <Marker
+            key={incident.id}
+            latitude={incident.lat}
+            longitude={incident.lng}
+            anchor="bottom"
+            onClick={(event) => {
+              event.originalEvent.stopPropagation();
+              setSelectedIncidentId(incident.id);
+            }}
+          >
+            <span
+              className={`pin ${CATEGORY_PIN[incident.category]}${
+                newIds.has(incident.id) ? " new" : ""
+              }`}
+              aria-label={`${CATEGORY_LABEL[incident.category]}, severidad ${incident.severity}`}
+              style={{
+                // display:block for the same reason as the location dot: inline spans
+                // collapse to 0×0 inside the Marker wrapper.
+                display: "block",
+                position: "relative",
+                transform: "rotate(45deg)",
+                cursor: "pointer",
+                // The mockup's drop keyframes re-anchor via translate, which fights the
+                // Marker transform; keep only the <b> ripple on the pin itself.
+                animation: "none",
               }}
             >
-              <button
-                type="button"
-                aria-label={`${CATEGORY_LABEL[incident.category]}, severidad ${incident.severity}`}
-                className={`relative flex ${markerSize} items-center justify-center rounded-2xl border-2 border-[#081017] text-[#071018] shadow-[0_8px_18px_rgba(0,0,0,0.48)] transition-transform active:scale-95`}
-                style={{ backgroundColor: color, boxShadow: `0 0 20px ${color}` }}
-              >
-                {incident.severity >= 4 ? (
-                  <span
-                    aria-hidden="true"
-                    className="absolute -inset-1 rounded-[18px] border opacity-60"
-                    style={{ borderColor: color }}
-                  />
-                ) : null}
-                <svg
-                  aria-hidden="true"
-                  width={18}
-                  height={18}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2.25}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {incident.category === "fire" ? (
-                    <path d="M12 22c4 0 7-2.7 7-6.5 0-3-2.1-5.1-4.3-7.7.1 2.5-1.1 3.8-2.7 4.8.2-3-1.2-5.3-3.3-7.6C8.7 9.2 5 11.5 5 15.5 5 19.3 8 22 12 22Z" />
-                  ) : incident.category === "flood" ? (
-                    <>
-                      <path d="M7 15.5c1.2 1 2.8 1 4 0 1.2 1 2.8 1 4 0 1.2 1 2.8 1 4 0" />
-                      <path d="M7 19c1.2 1 2.8 1 4 0 1.2 1 2.8 1 4 0 1.2 1 2.8 1 4 0" />
-                      <path d="M12 3c-2.7 3.2-4 5.3-4 7.1a4 4 0 0 0 8 0C16 8.3 14.7 6.2 12 3Z" />
-                    </>
-                  ) : incident.category === "road_closure" ? (
-                    <>
-                      <path d="M4 18h16" />
-                      <path d="m6 18 2-9h8l2 9" />
-                      <path d="M8 12h8" />
-                    </>
-                  ) : incident.category === "public_event" ? (
-                    <>
-                      <circle cx="12" cy="8" r="3" />
-                      <path d="M5 21c.8-4 3.2-6 7-6s6.2 2 7 6" />
-                    </>
-                  ) : incident.category === "accident" ? (
-                    <>
-                      <path d="M5 16h14l-1.5-5H7.5L5 16Z" />
-                      <path d="M8 11 9.5 8h5L16 11" />
-                      <circle cx="8" cy="17" r="1.5" />
-                      <circle cx="16" cy="17" r="1.5" />
-                    </>
-                  ) : (
-                    <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-12v4m0 4h.01" />
-                  )}
-                </svg>
-              </button>
-            </Marker>
-          );
-        })}
+              {newIds.has(incident.id) ? (
+                <b style={{ borderColor: CATEGORY_COLOR[incident.category] }} />
+              ) : null}
+            </span>
+          </Marker>
+        ))}
       </Map>
 
-      <header className="absolute inset-x-3.5 top-5 z-10 flex items-center gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl border border-line bg-[rgba(18,25,34,0.92)] px-3 py-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.28)] backdrop-blur">
-          <svg
-            aria-hidden="true"
-            width={17}
-            height={17}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--accent)"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z" />
-            <circle cx="12" cy="10" r="2.5" />
-          </svg>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-bold leading-none text-ink">{config.venueName}</p>
-            <p className="mt-1 text-[10.5px] leading-none text-muted">
-              {config.venueCity} · {config.defaultRadiusMeters >= 1000
-                ? `${config.defaultRadiusMeters / 1000} km`
-                : `${config.defaultRadiusMeters} m`}
-            </p>
-          </div>
-          <span className="ml-auto text-muted" aria-hidden="true">›</span>
-        </div>
-        <NotificationBell unread={incidents.length > 0 ? 1 : 0} />
-      </header>
-
       {!selectedIncidentId ? (
-        <div className="absolute inset-x-0 bottom-0 z-[3] rounded-t-[22px] border-t border-line bg-[rgba(18,25,34,0.97)] px-4 pb-3.5 pt-3 shadow-[0_-12px_28px_rgba(0,0,0,0.18)] backdrop-blur">
-          <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-line" />
-          <h1 className="mb-2.5 text-[13px] font-medium text-muted">
-            Cerca de ti · <span className="font-bold text-ink">{incidents.length} incidentes activos</span>
-          </h1>
-
-          {incidents.length > 0 ? (
-            <div className="divide-y divide-line">
-              {incidents.slice(0, 3).map((incident) => (
-                <button
-                  key={incident.id}
-                  type="button"
-                  onClick={() => setSelectedIncidentId(incident.id)}
-                  className="flex w-full items-center gap-3 py-2.5 text-left"
-                >
-                  <span
-                    className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-panel-2"
-                    style={{ color: CATEGORY_COLOR[incident.category] }}
-                    aria-hidden="true"
-                  >
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "currentColor" }} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-bold text-ink">{incident.title}</span>
-                    <span className="mt-0.5 block text-[10.5px] text-muted">
-                      {incident.distance_meters >= 1000
-                        ? `${(incident.distance_meters / 1000).toFixed(1)} km`
-                        : `${Math.round(incident.distance_meters)} m`}
-                      {" · "}{CATEGORY_LABEL[incident.category]}
-                    </span>
-                  </span>
-                  <span
-                    className="rounded-md px-1.5 py-1 text-[9px] font-bold uppercase tracking-wide"
-                    style={{
-                      color: CATEGORY_COLOR[incident.category],
-                      backgroundColor: "color-mix(in srgb, currentColor 15%, transparent)",
-                    }}
-                  >
-                    {STATUS_LABEL[incident.status]}
-                  </span>
-                </button>
-              ))}
+        <>
+          <div className="map-top">
+            <div className="sector">
+              <Icon name="ic-pin" />
+              <div>
+                <div className="nm">{config.venueName}</div>
+                <div className="sub">
+                  {config.venueCity} · {formatRadius(config.defaultRadiusMeters)}
+                </div>
+              </div>
+              <Icon name="ic-chevron" className="chev" />
             </div>
+            <NotificationBell unread={activeCount > 0 ? 1 : 0} />
+          </div>
+
+          <Link href="/assistant" className="fab" aria-label="Hablar con Cerca" style={{ bottom: fabBottom }}>
+            <Icon name="ic-mic" />
+          </Link>
+
+          {loading ? (
+            <div className="skel-sheet" ref={sheetRef}>
+              <div className="grab" />
+              <div className="skrow">
+                <span className="sk box" />
+                <div style={{ flex: 1 }}>
+                  <span className="sk l1" style={{ display: "block" }} />
+                  <span className="sk l2" style={{ display: "block" }} />
+                </div>
+              </div>
+              <div className="skrow">
+                <span className="sk box" />
+                <div style={{ flex: 1 }}>
+                  <span className="sk l1" style={{ display: "block" }} />
+                  <span className="sk l2" style={{ display: "block" }} />
+                </div>
+              </div>
+            </div>
+          ) : activeCount > 0 && !sheetHidden ? (
+            <div
+              className="sheet"
+              ref={sheetRef}
+              style={{
+                transform: `translateY(${sheetDragY}px)`,
+                transition: sheetPointerStartY.current === null ? "transform 180ms ease-out" : "none",
+              }}
+            >
+              <div
+                className="grab"
+                role="button"
+                tabIndex={0}
+                aria-label="Desliza hacia abajo para ocultar incidentes cercanos"
+                onPointerDown={startSheetDrag}
+                onPointerMove={dragSheet}
+                onPointerUp={releaseSheetHandle}
+                onPointerCancel={releaseSheetHandle}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSheetHidden(true);
+                  }
+                }}
+              />
+              <h3>
+                Cerca de ti · <b>{activeCount} incidentes activos</b>
+              </h3>
+              {incidents.slice(0, 3).map((incident) => {
+                const status = STATUS_CHIP[incident.status];
+                const open = () => setSelectedIncidentId(incident.id);
+                return (
+                  <div
+                    key={incident.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={open}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        open();
+                      }
+                    }}
+                    aria-label={`${incident.title}, ${CATEGORY_LABEL[incident.category]}`}
+                    className={`inc ${CATEGORY_SEV[incident.category]}`}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <div className="ic">
+                      <Icon
+                        name={CATEGORY_ICON[incident.category]}
+                        style={{ color: CATEGORY_COLOR[incident.category] }}
+                      />
+                    </div>
+                    <div className="body">
+                      <div className="title">{incident.title}</div>
+                      <div className="meta">
+                        <span className="mono">{formatDistance(incident.distance_meters)}</span>
+                        <span className="mono">{formatRelativeTime(incident.created_at)}</span>
+                        <span className={`status ${status.className}`}>{status.label}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : activeCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setSheetHidden(false)}
+              className="rounded-full border border-line bg-panel px-4 py-2 text-[12px] font-bold text-ink shadow-[0_8px_22px_rgba(0,0,0,0.25)]"
+              style={{ position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 3 }}
+            >
+              Mostrar {activeCount} incidentes cercanos
+            </button>
           ) : (
-            <p className="pb-1 text-[12px] leading-relaxed text-muted">
-              No hay incidentes activos en esta zona. Si ves algo, repórtalo para alertar a la comunidad.
-            </p>
+            <div className="empty" style={{ pointerEvents: "none" }}>
+              <div className="ring">
+                <Icon name="ic-target" />
+              </div>
+              <h4>Sin incidentes cerca</h4>
+              <p>
+                Nada activo en {formatRadius(config.defaultRadiusMeters)}. Si ves algo, sé el
+                primero en reportarlo.
+              </p>
+              <Link
+                href="/report"
+                className="btn primary sm"
+                style={{ width: "auto", padding: "10px 18px", pointerEvents: "auto" }}
+              >
+                Reportar algo
+              </Link>
+            </div>
           )}
-        </div>
+        </>
       ) : null}
 
       {selectedIncidentId ? (
         <IncidentDetailSheet
           incidentId={selectedIncidentId}
           onClose={() => setSelectedIncidentId(null)}
+          viewer={center}
         />
       ) : null}
     </section>
