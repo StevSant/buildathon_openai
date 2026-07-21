@@ -1,0 +1,103 @@
+# Review package: 163c66fe1c4ab4f91ced926b035ddfbf5a1433b0..0a401f8707a04d4ef6668e8819b9a9335136d212
+
+## Commits
+0a401f8 feat(assistant): add compact incident map primitives
+
+## Files changed
+ frontend/components/AssistantIncidentMap.tsx | 65 ++++++++++++++++++++++++++++
+ frontend/lib/assistant-conversation.ts       | 15 +++++++
+ 2 files changed, 80 insertions(+)
+
+## Diff
+diff --git a/frontend/components/AssistantIncidentMap.tsx b/frontend/components/AssistantIncidentMap.tsx
+new file mode 100644
+index 0000000..0d0e640
+--- /dev/null
++++ b/frontend/components/AssistantIncidentMap.tsx
+@@ -0,0 +1,65 @@
++"use client";
++
++import "maplibre-gl/dist/maplibre-gl.css";
++import Map, { Marker } from "react-map-gl/maplibre";
++import type { Category, NearbyIncident } from "@pulso/core";
++import { config, type AssistantLocation } from "@/lib";
++
++const CATEGORY_COLOR: Record<Category, string> = {
++  road_closure: "var(--sev-road)",
++  accident: "var(--sev-accident)",
++  flood: "var(--sev-flood)",
++  fire: "var(--sev-fire)",
++  public_event: "var(--sev-event)",
++  other: "var(--muted)",
++};
++
++export default function AssistantIncidentMap({
++  incidents,
++  center,
++}: {
++  incidents: NearbyIncident[];
++  center: AssistantLocation;
++}) {
++  return (
++    <div
++      className="assistant-map"
++      role="img"
++      aria-label={`Mapa compacto con ${incidents.length} ${
++        incidents.length === 1 ? "incidente cercano" : "incidentes cercanos"
++      }`}
++    >
++      <Map
++        reuseMaps
++        interactive={false}
++        attributionControl={false}
++        mapStyle={config.mapStyleUrl}
++        initialViewState={{
++          latitude: center.lat,
++          longitude: center.long,
++          zoom: config.defaultZoom,
++        }}
++        style={{ position: "absolute", inset: 0 }}
++      >
++        <Marker latitude={center.lat} longitude={center.long} anchor="center">
++          <span className="assistant-map-user" aria-hidden="true" />
++        </Marker>
++
++        {incidents.map((incident) => (
++          <Marker
++            key={incident.id}
++            latitude={incident.lat}
++            longitude={incident.lng}
++            anchor="bottom"
++          >
++            <span
++              className="assistant-map-pin"
++              aria-hidden="true"
++              style={{ background: CATEGORY_COLOR[incident.category] }}
++            />
++          </Marker>
++        ))}
++      </Map>
++    </div>
++  );
++}
+diff --git a/frontend/lib/assistant-conversation.ts b/frontend/lib/assistant-conversation.ts
+new file mode 100644
+index 0000000..36fd157
+--- /dev/null
++++ b/frontend/lib/assistant-conversation.ts
+@@ -0,0 +1,15 @@
++import type { IncidentDetails, NearbyIncident } from "@pulso/core";
++
++export interface AssistantLocation {
++  lat: number;
++  long: number;
++}
++
++export type AssistantTurnContent =
++  | { kind: "text"; role: "user" | "agent" | "tool"; text: string }
++  | { kind: "incidents"; incidents: NearbyIncident[] }
++  | { kind: "detail"; details: IncidentDetails };
++
++export type AssistantTurn = AssistantTurnContent & {
++  exchangeId: number;
++};
