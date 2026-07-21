@@ -30,10 +30,12 @@
 
 - [ ] **Step 1: Add category-confirmation state and reset it for every photo**
 
-Add state beside the existing `fields` state:
+Import `useRef`, then add state beside the existing `fields` state and a monotonically
+increasing request identifier beside the other hooks:
 
 ```tsx
 const [isCategoryConfirmed, setIsCategoryConfirmed] = useState(false);
+const analysisRequestId = useRef(0);
 ```
 
 Reset it in `onPickPhoto` with the other analysis values:
@@ -44,12 +46,22 @@ setIsCategoryConfirmed(false);
 setLocation(null);
 ```
 
+Capture the current request at the beginning of every valid selection:
+
+```tsx
+const requestId = ++analysisRequestId.current;
+```
+
 When analysis succeeds, keep specific categories on the fast path and leave `other` unresolved:
 
 ```tsx
+if (requestId !== analysisRequestId.current) return;
 setFields({ ...analysis, severity: clampSeverity(analysis.severity) });
 setIsCategoryConfirmed(analysis.category !== "other");
 ```
+
+Apply the same stale-request guard at the beginning of `catch` so an earlier failure cannot reset
+the active photo's phase or error state.
 
 - [ ] **Step 2: Centralize category selection and publication readiness**
 
@@ -77,10 +89,17 @@ async function publish() {
 
 - [ ] **Step 3: Make the existing category control resolve uncertainty**
 
-Replace its inline state mutation with the shared function:
+Replace its inline state mutation with the shared function. While the AI result is unresolved,
+give the select an empty value and include a disabled placeholder so intentionally selecting the
+already-visible `Otro` option still fires `change`:
 
 ```tsx
+value={isCategoryConfirmed ? fields.category : ""}
 onChange={(event) => chooseCategory(event.target.value as Category)}
+
+<option value="" disabled>
+  Elige una categoría
+</option>
 ```
 
 - [ ] **Step 4: Render the category correction panel**
