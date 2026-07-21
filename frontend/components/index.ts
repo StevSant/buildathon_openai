@@ -8,6 +8,7 @@ export { default as IncidentMap } from "./IncidentMap";
 export { default as ReportForm } from "./ReportForm";
 export { default as RealtimeAssistant } from "./RealtimeAssistant";
 export { default as IncidentDetailSheet } from "./IncidentDetailSheet";
+export { default as IncidentComments } from "./IncidentComments";
 export { default as NotificationBell } from "./NotificationBell";
 export { default as NotificationToast } from "./NotificationToast";
 export { default as NotificationBottomSheet } from "./NotificationBottomSheet";

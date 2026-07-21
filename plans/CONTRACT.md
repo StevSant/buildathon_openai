@@ -47,6 +47,9 @@ type NearbyIncident = {
 type IncidentDetails = Omit<NearbyIncident, 'distance_meters'> & {
   reporter_verified: boolean
 }
+type IncidentComment = {
+  id: string; body: string; created_at: string; author_verified: boolean
+}
 ```
 
 ---
@@ -67,13 +70,16 @@ lane owns the tables, RLS policies, and RPC bodies.
 | `get_nearby_incidents` | `user_lat` float, `user_long` float, `radius_meters` int (default 3000), `filter_category` text\|null | rows of `NearbyIncident` (≤20, ordered by distance) |
 | `get_incident_details` | `target_id` uuid | one `IncidentDetails` (anonymous: no reporter identity, only `reporter_verified` — ADR-020) |
 | `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }`; authenticated-only restricted privileged RPC |
+| `get_incident_comments` | `target_id` uuid | up to 100 anonymous `IncidentComment` rows, oldest first |
+| `add_incident_comment` | `target_id` uuid, `comment_body` text | one anonymous `IncidentComment`; authenticated active profiles only |
 
 ### 3.3 Table writes (RLS-guarded — client writes only its own rows)
 - **Publish incident:** `insert into incidents` with `{ reporter_id = auth.uid(), title, description, category, severity, location (geography point via st_point(lng,lat)), photo_path, expires_at }`.
 - **Safety config (owner-only, column-limited):** clients may edit settings/contact details,
   but never `whatsapp_config.verified`, `emergency_contacts.opt_in_status`, or dispatch logs.
 - **Server-owned:** profile identity/trust fields, incident status/confirmation counts, and
-  `incident_confirmations` rows. Clients reach voting only through `confirm_incident`.
+  `incident_confirmations` and `incident_comments` rows. Clients reach voting and comments only
+  through their restricted RPCs; comment author identity never reaches the client.
 
 ### 3.4 Realtime (live map + notifications both subscribe)
 ```ts

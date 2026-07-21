@@ -10,6 +10,7 @@ export type { Incident } from './incident';
 export type { Profile } from './profile';
 export type { NearbyIncident } from './nearby-incident';
 export type { IncidentDetails } from './incident-details';
+export type { IncidentComment } from './incident-comment';
 export type { EmergencyContact } from './emergency-contact';
 export type { AlertRule } from './alert-rule';
 export type { AlertContact } from './alert-contact';
