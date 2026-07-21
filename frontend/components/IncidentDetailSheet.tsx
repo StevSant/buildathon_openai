@@ -41,6 +41,7 @@ export default function IncidentDetailSheet({
   const [details, setDetails] = useState<IncidentDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -62,11 +63,18 @@ export default function IncidentDetailSheet({
 
   async function vote(kind: "confirm" | "dispute") {
     setBusy(true);
+    setVoteError(null);
     try {
       await confirmIncident(incidentId, kind);
       onClose();
-    } catch {
-      setHasError(true);
+    } catch (reason) {
+      const code = (reason as { code?: string })?.code;
+      const message = reason instanceof Error ? reason.message : "";
+      setVoteError(
+        code === "42501" || /row-level security/i.test(message)
+          ? "Tu cuenta está deshabilitada por reportes falsos; no puedes votar."
+          : "No pudimos registrar tu voto. Intenta de nuevo.",
+      );
     } finally {
       setBusy(false);
     }
@@ -138,23 +146,12 @@ export default function IncidentDetailSheet({
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted">
               <span>{details ? STATUS_LABEL[details.status] : ""}</span>
-              {details?.reporter_verified ? (
-                <span className="inline-flex items-center gap-1 font-semibold text-ok">
-                  <svg
-                    aria-hidden="true"
-                    width={13}
-                    height={13}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={3}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m5 12 4 4L19 6" />
-                  </svg>
-                  Identidad verificada
-                </span>
+              {details ? (
+                details.reporter_verified ? (
+                  <span className="font-semibold text-accent">Reporte verificado ✓</span>
+                ) : (
+                  <span>Reporte ciudadano</span>
+                )
               ) : null}
             </div>
             <p className="mt-4 text-[13px] leading-relaxed text-[#c7d0da]">
@@ -164,6 +161,11 @@ export default function IncidentDetailSheet({
               <span className="font-bold text-ink">{details?.confirmations ?? 0} confirmaron.</span>{" "}
               ¿Lo estás viendo? Tu reporte ayuda a verificar la información para toda la comunidad.
             </div>
+            {voteError && (
+              <p aria-live="polite" className="mt-2 text-[12px] text-sev-fire">
+                {voteError}
+              </p>
+            )}
           </>
         )}
       </div>
