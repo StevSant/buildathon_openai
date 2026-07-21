@@ -9,8 +9,15 @@ export class HermesWhatsAppGateway implements MessagingGateway {
     kind: 'proximity' | 'sos' | 'optin';
     context?: Record<string, unknown>;
   }): Promise<{ id: string; status: string }> {
+    // The deliver-only webhook renders `{text}` verbatim, so the message is composed here.
+    // Callers may pass a ready `context.text`; otherwise a per-kind default is used.
+    const text =
+      typeof input.context?.text === 'string' ? input.context.text : defaultMessage(input.kind);
+    // Baileys chat_id is the phone as digits only (country code, no '+'). phone_e164
+    // is stored with '+', so normalize before the webhook deliver-chat-id sees it.
+    const to = input.to.replace(/\D/g, '');
     // Serialize once: Hermes V2 signs the exact bytes that are transmitted.
-    const body = JSON.stringify({ to: input.to, kind: input.kind, ...(input.context ?? {}) });
+    const body = JSON.stringify({ to, text, kind: input.kind, ...(input.context ?? {}) });
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = await hmacSha256Hex(this.config.secret, `${timestamp}.${body}`);
     // The same alert payload gets the same delivery ID, so Hermes suppresses retried requests.
@@ -33,6 +40,18 @@ export class HermesWhatsAppGateway implements MessagingGateway {
 
     const data = (await response.json().catch(() => ({}))) as { id?: string; status?: string };
     return { id: data.id ?? `pulso-${requestId}`, status: data.status ?? 'queued' };
+  }
+}
+
+function defaultMessage(kind: 'proximity' | 'sos' | 'optin'): string {
+  switch (kind) {
+    case 'optin':
+      return '🔔 *Pulso* — Activaste las alertas por WhatsApp para este número. Te avisaremos cuando haya incidentes cerca de tu zona. Si no fuiste tú, ignora este mensaje.';
+    case 'sos':
+      return '🆘 *Pulso* — Alguien activó un SOS cerca de ti. Mantente alerta; si es una emergencia, llama al ECU 911.';
+    case 'proximity':
+    default:
+      return '⚠️ *Pulso* — Se reportó un incidente cerca de tu zona. Abre Pulso para ver los detalles.';
   }
 }
 
