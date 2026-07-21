@@ -91,9 +91,9 @@ begin
 
   return query
     with inserted as (
-      insert into public.incident_comments (incident_id, author_id, body)
+      insert into public.incident_comments as comment (incident_id, author_id, body)
       values (target_id, uid, clean_body)
-      returning id, body, created_at, author_id
+      returning comment.id, comment.body, comment.created_at, comment.author_id
     )
     select
       inserted.id,
