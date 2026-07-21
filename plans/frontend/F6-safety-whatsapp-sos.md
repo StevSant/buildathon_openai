@@ -9,7 +9,7 @@
 onboarding, WhatsApp opt-in + phone registration, emergency-contact CRUD, the per-user alert rule,
 and a functioning SOS button.
 **Depends on:** B1 (schema: `whatsapp_config`, `emergency_contacts`, `alert_rules` from migration
-`0002`) applied. SOS delivery and contact opt-in are fully exercised only once **B5**
+`0002`) applied. SOS delivery and contact opt-in are fully exercised only once **C1**
 (`proximity-dispatcher`) is deployed; the frontend codes against `CONTRACT.md` and creates the rows
 / posts the payloads regardless, so it is never blocked.
 **Reads from CONTRACT:** §3.3 (owner-only table writes: `whatsapp_config`, `emergency_contacts`,
@@ -17,7 +17,7 @@ and a functioning SOS button.
 §6 (env split).
 
 **FRs covered:** FR-22 (Task 2), FR-23 (Task 3), FR-24 (Task 4), FR-25 (Task 4 — the client writes
-`alert_rules.center` so B5 can evaluate server-side), FR-26 (Task 5), FR-27 (Task 1).
+`alert_rules.center` so C1 can evaluate server-side), FR-26 (Task 5), FR-27 (Task 1).
 **ADRs covered:** ADR-017 (WhatsApp emergency alerts / Hermes / `proximity-dispatcher` — Tasks 2–5),
 ADR-019 (post-login permissions & safety onboarding — Task 1).
 
@@ -31,7 +31,7 @@ ADR-019 (post-login permissions & safety onboarding — Task 1).
    (`SRID=4326;POINT(lng lat)`) — the same approach CONTRACT §3.3 uses for `incidents.location`.
    PostGIS parses EWKT on write via PostgREST. If a location is unavailable, the write is skipped
    and the rule still saves (center stays null → simply won't match server-side, per DATA-MODEL §9).
-3. **SOS delivery and contact opt-in** ("responde SÍ") are owned by **B5** (`proximity-dispatcher`
+3. **SOS delivery and contact opt-in** ("responde SÍ") are owned by **C1** (`proximity-dispatcher`
    + `MessagingGateway`/Hermes). The frontend only (a) inserts the `pending` contact row and
    (b) POSTs the SOS payload. It never sends WhatsApp itself and never holds contact fan-out logic.
 4. **First-run routing** to `/profile/security` after signup is owned by **F1** (auth/routing). F6
@@ -513,7 +513,7 @@ git commit -m "feat(safety): wire WhatsApp enable toggle + phone registration to
 
 - [ ] **Step 1: Rewrite the component.** Add E.164 validation, surface insert errors (including the
   duplicate-phone unique-violation), render all three `opt_in_status` values, and correct the
-  misleading TODO: the opt-in WhatsApp message is sent by the backend (B5) — the frontend only
+  misleading TODO: the opt-in WhatsApp message is sent by the integrations lane (C1) — the frontend only
   inserts the `pending` row. Replace the entire file contents:
 
 ```tsx
@@ -534,7 +534,7 @@ interface EmergencyContact {
 const E164 = /^\+[1-9]\d{7,14}$/;
 
 // Manage emergency contacts. Adding a contact inserts a "pending" row; the opt-in WhatsApp
-// message ("responde SÍ") is sent by the backend (B5, proximity-dispatcher via the Hermes
+// message ("responde SÍ") is sent by C1 (proximity-dispatcher via the Hermes
 // MessagingGateway) — the frontend only creates the row here. Only "accepted" contacts are
 // ever messaged.
 export default function EmergencyContactsForm() {
@@ -686,7 +686,7 @@ git commit -m "fix(safety): validate E.164, surface insert errors, and render al
 
 - [ ] **Step 1: Rewrite the component.** Load the existing row (keep its `id` for updates), write
   min_severity/radius_meters/enabled/channel via read-then-write keyed on `user_id`, then best-effort
-  attach the user's last-known location to `center` (EWKT) so B5 can evaluate server-side (FR-25).
+  attach the user's last-known location to `center` (EWKT) so C1 can evaluate server-side (FR-25).
   Replace the entire file contents:
 
 ```tsx

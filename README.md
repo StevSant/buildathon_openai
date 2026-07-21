@@ -136,11 +136,9 @@ DISPUTE_THRESHOLD=3                      # disputes → 'disputed' (confirm_inci
 TRUST_VERIFIED_BONUS=10                  # trust-score weights (helper not wired yet)
 TRUST_PER_CONFIRMED=2
 TRUST_PER_DISPUTED=3
-HERMES_API_URL=                          # (P2 safety layer) WhatsApp gateway base URL — empty = disabled
-HERMES_API_KEY=                          # (P2) WhatsApp gateway key
-HERMES_WHATSAPP_FROM=                    # (P2) sender number/id for outbound WhatsApp
-WHATSAPP_PROXIMITY_TEMPLATE=pulso_proximity_alert  # (P2) Hermes template for proximity alerts
-WHATSAPP_SOS_TEMPLATE=pulso_sos                    # (P2) Hermes template for manual SOS
+HERMES_WEBHOOK_URL=                      # (P2 safety layer) Hermes pulso-alerts webhook URL
+HERMES_WEBHOOK_SECRET=                   # (P2) HMAC V2 secret shared with Hermes
+PROXIMITY_WEBHOOK_SECRET=                # (P2) database-webhook guard for proximity-dispatcher
 TIMEZONE=America/Guayaquil
 DEFAULT_LANGUAGE=es
 ```

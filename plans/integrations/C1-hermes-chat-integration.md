@@ -62,7 +62,7 @@ export interface MessagingGateway {
 
 - [ ] **Step 2: Typecheck**
 
-Run: `cd backend && npm run typecheck`
+Run from the repository root: `npm run typecheck`
 Expected: `core` fails to compile in `dispatch-proximity-alerts.ts` (still passes `template`) —
 that is fixed in Task 3. The port file itself has no errors. Proceed.
 
@@ -123,7 +123,7 @@ export class HermesWhatsAppGateway implements MessagingGateway {
 
 - [ ] **Step 2: Typecheck**
 
-Run: `cd backend && npm run typecheck`
+Run from the repository root: `npm run typecheck`
 Expected: `adapters` compiles (the `core` error from Task 1 remains until Task 3).
 
 - [ ] **Step 3: Commit**
@@ -219,7 +219,7 @@ export function makeDispatchProximityAlerts({
 
 - [ ] **Step 2: Typecheck**
 
-Run: `cd backend && npm run typecheck`
+Run from the repository root: `npm run typecheck`
 Expected: `core` now compiles. `adapters` still compiles. (The Deno function is checked when served.)
 
 - [ ] **Step 3: Commit**
@@ -239,8 +239,9 @@ git commit -m "refactor(safety): dispatch by kind+context; keep accepted-guard a
 **Interfaces:**
 - Consumes: `HermesWhatsAppGateway` (Task 2), `makeDispatchProximityAlerts` (Task 3), `getEnv`
   (Task 5).
-- Accepts bodies: `{ record: { id } }` or `{ incidentId }` (incident insert); `{ sos: {...} }`
-  (manual SOS, with `Authorization`); `{ optin: { contactId } }` (contact added).
+- Accepts bodies: `{ record: { id } }` or `{ incidentId }` (incident insert, with
+  `x-pulso-webhook-secret`); `{ type: 'sos', location: { lat, lng } }` (manual SOS, with
+  `Authorization`); `{ optin: { contactId } }` (contact added, with `Authorization`).
 - Produces: `{ dispatched: number }`; error `{ error }`.
 
 - [ ] **Step 1: Replace the file contents**
@@ -265,7 +266,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const env = getEnv();
-    if (!env.hermesWebhookUrl || !env.hermesWebhookSecret) {
+    if (!env.hermesWebhookUrl || !env.hermesWebhookSecret || !env.proximityWebhookSecret) {
       throw new Error("HERMES_WEBHOOK_* no configurado");
     }
 
@@ -284,10 +285,14 @@ Deno.serve(async (req) => {
 
     // ---- Opt-in: a contact was just added; ask them to accept over WhatsApp (FR-23) ----
     if (body.optin?.contactId) {
+      const { data } = await createUserClient(req).auth.getUser();
+      const ownerId = data.user?.id;
+      if (!ownerId) throw new Error("unauthorized");
       const { data: contact } = await service
         .from("emergency_contacts")
         .select("id, phone_e164")
         .eq("id", body.optin.contactId)
+        .eq("owner_id", ownerId)
         .single();
       if (!contact) throw new Error("contacto no encontrado");
       await messaging.sendWhatsApp({ to: contact.phone_e164, kind: "optin" });
@@ -295,14 +300,14 @@ Deno.serve(async (req) => {
     }
 
     // ---- SOS: message the caller's own accepted contacts immediately (FR-26) ----
-    if (body.sos) {
+    if (body.type === "sos" && body.location) {
       const { data } = await createUserClient(req).auth.getUser();
       const ownerId = data.user?.id;
       if (!ownerId) throw new Error("unauthorized");
       const result = await dispatch({
         kind: "sos",
         userId: ownerId,
-        context: { area: body.sos.area ?? null },
+        context: { lat: body.location.lat, lng: body.location.lng },
       });
       await logDispatches(service, null, result.results);
       return Response.json({ dispatched: result.sent }, { headers: corsHeaders });
@@ -311,6 +316,9 @@ Deno.serve(async (req) => {
     // ---- Proximity: a DB webhook sends { record: { id } }; a manual call may send { incidentId } ----
     const incidentId = body.incidentId ?? body.record?.id;
     if (!incidentId) throw new Error("incidentId requerido");
+    if (req.headers.get("x-pulso-webhook-secret") !== env.proximityWebhookSecret) {
+      throw new Error("unauthorized");
+    }
     const result = await dispatch({ kind: "proximity", incidentId });
     await logDispatches(service, incidentId, result.results);
     return Response.json({ dispatched: result.sent }, { headers: corsHeaders });
@@ -368,7 +376,8 @@ git commit -m "feat(safety): trigger Hermes webhook; opt-in branch, dispatch log
 - Modify: `.env.example` (repo root)
 
 **Interfaces:**
-- Produces: `getEnv().hermesWebhookUrl` and `getEnv().hermesWebhookSecret` (both optional).
+- Produces: `getEnv().hermesWebhookUrl`, `getEnv().hermesWebhookSecret`, and
+  `getEnv().proximityWebhookSecret` (all server-only).
 
 - [ ] **Step 1: Replace the WhatsApp block in `getEnv()`**
 
@@ -380,6 +389,7 @@ In `backend/supabase/functions/_shared/env.ts`, replace the existing
     // Hermes Agent webhook (outbound WhatsApp alerts — see docs/HERMES-CHAT-INTEGRATION.md §6)
     hermesWebhookUrl: optional("HERMES_WEBHOOK_URL"),
     hermesWebhookSecret: optional("HERMES_WEBHOOK_SECRET"),
+    proximityWebhookSecret: optional("PROXIMITY_WEBHOOK_SECRET"),
 ```
 
 - [ ] **Step 2: Replace the Hermes block in the repo `.env.example`**
@@ -392,11 +402,12 @@ Replace the five `HERMES_API_URL` / `HERMES_API_KEY` / `HERMES_WHATSAPP_FROM` /
 # Create it on the VM with: hermes webhook subscribe "pulso-alerts" ...  (see docs/hermes/)
 HERMES_WEBHOOK_URL=https://<hermes-vm-host>/webhooks/pulso-alerts
 HERMES_WEBHOOK_SECRET=your-shared-secret       # sent as x-pulso-signature; also verified by the VM
+PROXIMITY_WEBHOOK_SECRET=your-random-secret    # Database Webhook sends as x-pulso-webhook-secret
 ```
 
 - [ ] **Step 3: Typecheck**
 
-Run: `cd backend && npm run typecheck`
+Run from the repository root: `npm run typecheck`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -513,30 +524,36 @@ def _call_agent_tools(tool: str, arguments: dict, bearer: str) -> dict:
         return json.load(r)
 
 
-def _bearer_for(sender: str, require_user: bool) -> str:
+def _bearer_for(sender: str) -> str:
     user_id = _resolve_user_id(sender)
-    if user_id:
-        return _mint_user_jwt(user_id)
-    if require_user:
+    if not user_id:
         raise ValueError("El número no está registrado en Pulso; no puedo hacer esta acción.")
-    # Read-only public data for an unregistered sender: mint a minimal authenticated token.
-    return _mint_user_jwt("00000000-0000-0000-0000-000000000000")
+    return _mint_user_jwt(user_id)
 
 
 @mcp.tool()
 def get_nearby_incidents(
-    sender: str, radius_meters: int = 3000, filter_category: str | None = None
+    sender: str,
+    user_lat: float,
+    user_long: float,
+    radius_meters: int = 3000,
+    filter_category: str | None = None,
 ) -> dict:
-    """Incidentes activos cerca de la persona. `sender` = su número de WhatsApp en formato E.164."""
-    args = {"radius_meters": radius_meters, "filter_category": filter_category}
-    return _call_agent_tools("get_nearby_incidents", args, _bearer_for(sender, require_user=False))
+    """Incidentes cerca de coordenadas compartidas por la persona en la conversación."""
+    args = {
+        "user_lat": user_lat,
+        "user_long": user_long,
+        "radius_meters": radius_meters,
+        "filter_category": filter_category,
+    }
+    return _call_agent_tools("get_nearby_incidents", args, _bearer_for(sender))
 
 
 @mcp.tool()
 def get_incident_details(sender: str, incident_id: str) -> dict:
     """Detalle de un incidente concreto por su id (uuid)."""
     return _call_agent_tools(
-        "get_incident_details", {"incident_id": incident_id}, _bearer_for(sender, require_user=False)
+        "get_incident_details", {"incident_id": incident_id}, _bearer_for(sender)
     )
 
 
@@ -544,7 +561,7 @@ def get_incident_details(sender: str, incident_id: str) -> dict:
 def confirm_incident(sender: str, incident_id: str, kind: str = "confirm") -> dict:
     """Registra la valoración: kind='confirm' (lo está viendo) o 'dispute' (cree que no es correcto)."""
     args = {"incident_id": incident_id, "kind": "dispute" if kind == "dispute" else "confirm"}
-    return _call_agent_tools("confirm_incident", args, _bearer_for(sender, require_user=True))
+    return _call_agent_tools("confirm_incident", args, _bearer_for(sender))
 
 
 if __name__ == "__main__":

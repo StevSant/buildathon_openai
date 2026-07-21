@@ -1,54 +1,35 @@
-# Session 2 — Backend orchestrator (Person B)
+# Session B — Backend orchestrator (Person B)
 
-Paste everything in the block below into a second fresh Claude Code session opened at the repo root.
+Paste the block below into a fresh Codex session opened at the repository root.
 
----
+```text
+You are the BACKEND orchestrator for Pulso. Own backend/supabase/**, backend/core/**, and
+backend/adapters/** except Person C's messaging carve-out listed in plans/CONTRACT.md.
+You own migrations, plans/CONTRACT.md during the bootstrap gate, backend barrels, and the
+B6 edits to docs/DECISIONS.md and docs/DATA-MODEL.md. Never edit frontend/**.
 
-```
-You are the BACKEND orchestrator for the Pulso PWA (OpenAI Buildathon). You own ONLY
-`backend/supabase/**`, `backend/core/**`, `backend/adapters/**`. Never edit frontend/**,
-plans/CONTRACT.md, or root package.json / tsconfig.base.json.
+Read first:
+- plans/CONTRACT.md
+- plans/00-README.md
+- plans/prompts/README.md
+- plans/backend/B1-schema-rls-rpc-seed.md
+- plans/backend/B2-identity.md
+- plans/backend/B3-vision-analysis.md
+- plans/backend/B4-realtime-and-tools.md
+- plans/backend/B6-anonymous-reports-abuse-gate.md
 
-READ FIRST (do not skip):
-- plans/CONTRACT.md            (the frozen seam — your RPCs/functions must match these shapes)
-- plans/00-README.md          (ownership matrix + conventions)
-- plans/prompts/README.md     (parallelization map + the sub-agent collision rule)
-- plans/backend/B1..B5.md     (the five plans — skim to confirm scope)
+Execution:
+1. Run B1 alone, then B6 immediately. Apply/reset the local schema when the Supabase CLI and
+   Docker are available. Verify the final anonymous IncidentDetails contract and disabled-user
+   abuse gate.
+2. Announce "B1+B6 frozen" only after both plans and their shared docs are complete.
+3. Dispatch B2-B4 in one parallel wave using their wrapper prompts. Never dispatch retired B5.
+4. Integrate requested exports in the backend barrels. Person C owns messaging files and Hermes
+   keys; coordinate instead of editing those files.
+5. Run npm run typecheck. If Deno is installed, deno check every Edge Function entry point.
+   If Supabase is available, run the B1/B6 SQL/RLS verification, including direct-client
+   attempts to forge verification/status fields and cross-user confirmation voting.
 
-CONVENTIONS (from the plans):
-- Derive user_id from the JWT (`userFromJwt`); NEVER trust a user_id in the request body.
-- All edge functions return `{ error: string }` on non-2xx (CONTRACT §4 envelope).
-- No hardcoded model ids/keys/thresholds — everything via getEnv() / Supabase secrets (CONTRACT §6).
-- One symbol per file + package barrels (index.ts re-exports). Code + comments + commits in English;
-  model-generated user-facing text (titles/descriptions/persona) in Spanish.
-- No automated tests (ADR-015) — verify by typecheck (+ supabase functions serve where noted).
-
-GIT: create branch `feat/backend-lane` from the shared baseline. Work only in it.
-
-EXECUTION STRATEGY:
-1. SEQUENTIAL GATE — do B1 FIRST, before any fan-out. Use the wrapper prompt
-   plans/prompts/subagents/backend/B1-schema-rls-rpc-seed.md (dispatch it as a single agent, or do
-   it yourself). B1 freezes the migrations/RLS/RPCs the whole contract references. Verify it
-   (`npm run typecheck`; if Docker/Supabase is available, `cd backend && supabase db reset` to apply
-   0001/0002 + seed cleanly). Then post in the shared channel: "B1 is frozen."
-
-2. Then fan out FOUR `general-purpose` sub-agents, ALL IN ONE MESSAGE so they run in parallel.
-   Use the wrapper prompts verbatim:
-     - plans/prompts/subagents/backend/B2-identity.md
-     - plans/prompts/subagents/backend/B3-vision-analysis.md
-     - plans/prompts/subagents/backend/B4-realtime-and-tools.md
-     - plans/prompts/subagents/backend/B5-proximity-dispatcher.md
-   These edit disjoint files (B3 and B4 share only the adapters/ai/ FOLDER, not any file). Each agent
-   is told NOT to edit top-level barrels (adapters/index.ts, core/ports, core/use-cases barrels) or
-   the frozen migrations — it reports needed exports back to you instead.
-
-3. When agents return: wire any barrel/port exports they flagged, resolve any contract deviations,
-   then run the authoritative typecheck to green: `npm run typecheck` (core + adapters). If Deno is
-   available, `deno check` each edge function under backend/supabase/functions/.
-
-4. FINAL QA (parallel): dispatch `ecc:typescript-reviewer` + `ecc:database-reviewer` +
-   `ecc:security-reviewer` over the changed files; fix CRITICAL and HIGH, then re-run typecheck.
-
-Report back: a one-line status per plan (B1..B5), the barrels/ports you wired, and the final
-typecheck result.
+Report one line for B1-B4 and B6, the exact "B1+B6 frozen" state, barrels changed, and
+verification evidence.
 ```

@@ -232,7 +232,7 @@ default center):
 psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c "
   insert into public.incidents (title, description, category, severity, status, location)
   values ('Incendio de prueba','demo','fire',5,'provisional',
-          extensions.st_point(-80.7085, -0.9675)::extensions.geography);
+          extensions.st_point(-80.45435, -1.05448)::extensions.geography);
 "
 ```
 Expected: within ~1–2 s a **bottom sheet** "Alerta cerca de ti" appears with the title, distance,
@@ -244,7 +244,7 @@ and age (severity 5 ≥ min AND < radius).
 psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c "
   insert into public.incidents (title, description, category, severity, status, location)
   values ('Evento lejano de prueba','demo','public_event',1,'confirmed',
-          extensions.st_point(-80.6800, -0.9400)::extensions.geography);
+          extensions.st_point(-80.4450, -1.0460)::extensions.geography);
 "
 ```
 Expected: a discreet **toast** appears (relevant but not urgent) and auto-dismisses after ~5 s.
