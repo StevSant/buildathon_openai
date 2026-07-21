@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
-import { TabBar } from "@/components";
+import { AuthGuard, NotificationHost, TabBar } from "@/components";
 
-// Post-login shell: scrollable content above a persistent bottom tab bar.
+// The shared authenticated shell keeps protected routes, realtime alerts, and persistent
+// navigation together while the individual feature routes remain independent.
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="app-shell">
-      <main className="flex flex-1 flex-col overflow-hidden">{children}</main>
-      <TabBar />
-    </div>
+    <AuthGuard>
+      <div className="app-shell">
+        <main className="flex flex-1 flex-col overflow-hidden">{children}</main>
+        <NotificationHost />
+        <TabBar />
+      </div>
+    </AuthGuard>
   );
 }

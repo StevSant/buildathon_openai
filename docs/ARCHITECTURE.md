@@ -151,7 +151,7 @@ verify-identity:
   3. upsert profiles row: { id: auth.uid(), cedula_hash (UNIQUE), verified, verification_method }
         ↓
 On UNIQUE violation → "this ID already has an account"
-On invalid cédula   → block, ask to re-enter
+On invalid cédula   → HTTP 422 `{ error }`; block and ask to re-enter
 ```
 The raw cédula lives only in the request body and in memory during validation. Only the
 hash is persisted.
@@ -259,7 +259,7 @@ for each match → MessagingGateway.sendWhatsApp({ to, kind, context? }) → sig
         ↓
 record in whatsapp_dispatch_log (unique per incident+contact → idempotent)
 
-Manual SOS: client → proximity-dispatcher with an SOS template → same fan-out to my contacts.
+Manual SOS: client → proximity-dispatcher `{ type: "sos", location: { lat, lng } }` → same fan-out.
 ```
 Adding a contact first sends a WhatsApp **opt-in** ("responde SÍ" / "BAJA"); only `accepted`
 contacts are ever messaged. See [ADR-017](DECISIONS.md) and [DATA-MODEL §9](DATA-MODEL.md#9-whatsapp--sos-migration-0002).
@@ -294,16 +294,20 @@ Concretely:
 - The OpenAI API key exists **only** in Edge Function secrets. The browser gets an
   ephemeral client secret.
 - `agent-tools` never trusts a `user_id` in the arguments — it calls `supabase.auth.getUser()`.
-- Any state-changing tool (`confirm_incident`, future `mark_resolved`) re-checks ownership/role.
-- RLS: a user reads only their own `profiles` row; incidents are readable by authenticated
-  users but writable only with `reporter_id = auth.uid()`.
+- `confirm_incident` is a narrowly granted privileged transaction: it derives `auth.uid()`,
+  validates inputs, locks the target incident, and is executable only by `authenticated`.
+- RLS + column privileges: a user reads only their own `profiles` row and can edit only
+  `display_name`; incidents are readable by authenticated users and directly insertable only
+  with `reporter_id = auth.uid()`. Identity/trust and incident state/counts are server-owned.
 - Storage: authenticated upload to own prefix; reads via public bucket or signed URLs
   (⚠️ photos may contain plates/faces — acceptable for the demo, flagged as a real-world concern).
 - Safety layer: `whatsapp_config`, `emergency_contacts`, and `alert_rules` are **owner-only**
   under RLS — no user (or the agent) can read another's contacts or phone numbers. A contact is
   messaged only after explicit WhatsApp **opt-in** (`opt_in_status = 'accepted'`).
   `proximity-dispatcher` runs with the **service role** (bypasses RLS, like seed) precisely
-  because it must fan out across many users' rules on a single INSERT.
+  because it must fan out across many users' rules on a single INSERT. Database calls require
+  `x-pulso-webhook-secret`; SOS calls require a valid user JWT. Each contact send is isolated so
+  one Hermes failure cannot abort later accepted contacts.
 
 ## 6. Configuration
 

@@ -1,6 +1,6 @@
 -- Pulso — initial schema. Mirrors docs/DATA-MODEL.md §2–§6 (authoritative, rewritten).
--- Supabase conventions: PostGIS in the `extensions` schema; functions are
--- `security invoker` with `set search_path = ''`.
+-- Supabase conventions: PostGIS in the `extensions` schema; functions pin
+-- `search_path = ''`; privileged RPCs have explicit EXECUTE grants.
 
 -- ============================================================================
 -- §2. Extensions
@@ -20,6 +20,7 @@ create table public.profiles (
   verified            boolean not null default false,
   verification_method text check (verification_method in ('registry','algorithmic')),
   trust_score         integer not null default 0,
+  disabled_at         timestamptz,                 -- non-null means disabled; the cédula hash remains as an abuse tombstone
   created_at          timestamptz not null default now()
 );
 
@@ -62,13 +63,34 @@ alter table public.profiles                enable row level security;
 alter table public.incidents               enable row level security;
 alter table public.incident_confirmations  enable row level security;
 
--- profiles: a user sees and edits ONLY their own row
+-- True while the caller's profile has not been disabled (ADR-020). A signed-up user without
+-- a profile row counts as active because disabling is an explicit moderation action.
+-- SECURITY DEFINER avoids recursive profiles RLS evaluation; the caller identity still comes
+-- exclusively from auth.uid(), the search path is pinned, and only authenticated may execute.
+create or replace function public.is_active_profile()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select not exists (
+    select 1
+    from public.profiles p
+    where p.id = (select auth.uid()) and p.disabled_at is not null
+  );
+$$;
+
+revoke all on function public.is_active_profile() from public, anon;
+grant execute on function public.is_active_profile() to authenticated;
+
+-- profiles: a user sees only their own row; only display_name is client-editable.
 create policy "own profile - select" on public.profiles
-  for select using ((select auth.uid()) = id);
-create policy "own profile - upsert" on public.profiles
-  for insert with check ((select auth.uid()) = id);
+  for select to authenticated using ((select auth.uid()) = id);
 create policy "own profile - update" on public.profiles
-  for update using ((select auth.uid()) = id);
+  for update to authenticated
+  using ((select auth.uid()) = id)
+  with check ((select auth.uid()) = id);
 
 -- incidents: any authenticated user reads active incidents
 create policy "incidents - read active" on public.incidents
@@ -78,18 +100,34 @@ create policy "incidents - read active" on public.incidents
 -- incidents: a user may insert only as themselves
 create policy "incidents - insert own" on public.incidents
   for insert to authenticated
-  with check (reporter_id = (select auth.uid()));
+  with check (
+    reporter_id = (select auth.uid())
+    and (select public.is_active_profile())
+  );
 
--- incidents: a user may update only their own report (P1: moderators added later)
-create policy "incidents - update own" on public.incidents
-  for update to authenticated
-  using (reporter_id = (select auth.uid()));
-
--- confirmations: insert as self, read your own
+-- Defense in depth: direct table privileges remain revoked, and the privileged RPC repeats
+-- the active-account check because SECURITY DEFINER functions bypass RLS.
 create policy "confirmations - insert own" on public.incident_confirmations
-  for insert to authenticated with check (user_id = (select auth.uid()));
-create policy "confirmations - read own" on public.incident_confirmations
-  for select to authenticated using (user_id = (select auth.uid()));
+  for insert to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and (select public.is_active_profile())
+  );
+
+-- Direct confirmation-table access and incident updates are intentionally absent.
+-- Community voting goes only through the restricted confirm_incident RPC.
+
+-- Explicit Data API privileges. Identity/trust and incident state remain server-owned.
+revoke all on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
+grant update (display_name) on public.profiles to authenticated;
+
+revoke all on public.incidents from anon, authenticated;
+grant select on public.incidents to authenticated;
+grant insert (reporter_id, title, description, category, severity, location, photo_path, expires_at)
+  on public.incidents to authenticated;
+
+revoke all on public.incident_confirmations from anon, authenticated;
 
 -- ============================================================================
 -- §5. RPC functions
@@ -142,7 +180,9 @@ as $$
   limit 20;
 $$;
 
--- get_incident_details — one incident, no reporter PII
+-- get_incident_details — one active incident, anonymous to users. This is SECURITY DEFINER so
+-- it can derive the verification badge across profiles RLS; its explicit auth and visibility
+-- predicates preserve the incidents read policy, and its return type contains no reporter id/PII.
 create or replace function public.get_incident_details(target_id uuid)
 returns table (
   id            uuid,
@@ -152,19 +192,17 @@ returns table (
   severity      integer,
   status        text,
   confirmations integer,
-  reporter_name text,        -- display_name only; never cédula/email
   reporter_verified boolean,
   created_at    timestamptz,
   lng           double precision,
   lat           double precision
 )
 language sql
-security invoker
+security definer
 set search_path = ''
 as $$
   select
     i.id, i.title, i.description, i.category, i.severity, i.status, i.confirmations,
-    p.display_name as reporter_name,
     coalesce(p.verified, false) as reporter_verified,
     i.created_at,
     extensions.st_x(i.location::extensions.geometry) as lng,
@@ -172,6 +210,9 @@ as $$
   from public.incidents i
   left join public.profiles p on p.id = i.reporter_id
   where i.id = target_id
+    and (select auth.uid()) is not null
+    and i.status <> 'resolved'
+    and (i.expires_at is null or i.expires_at > now())
   limit 1;
 $$;
 
@@ -179,29 +220,37 @@ $$;
 -- user per incident, switchable. `confirmations` counts 'confirm' votes only; dispute derived.
 -- Status rules mirror core/domain/next-incident-status.ts: `resolved` is terminal, a dispute
 -- at threshold wins over a confirmation at threshold, and below both thresholds the incident
--- returns to `provisional`. Thresholds are injectable per call (the agent-tools composition
--- root passes CONFIRM_THRESHOLD / DISPUTE_THRESHOLD from env) and default to 3.
+-- returns to `provisional`. Thresholds stay private to the function so direct clients cannot
+-- lower them to forge incident state; the public signature is the frozen two-argument contract.
 create or replace function public.confirm_incident(
   target_id uuid,
-  kind      text default 'confirm',
-  confirm_threshold integer default 3,
-  dispute_threshold integer default 3
+  kind      text default 'confirm'
 )
 returns table (id uuid, confirmations integer, status text)
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 declare
-  uid       uuid := (select auth.uid());
-  n_confirm integer;
-  n_dispute integer;
+  uid                    uuid := (select auth.uid());
+  required_confirmations constant integer := 3;
+  required_disputes      constant integer := 3;
+  n_confirm              integer;
+  n_dispute              integer;
 begin
   if uid is null then
     raise exception 'not authenticated';
   end if;
   if kind not in ('confirm','dispute') then
     raise exception 'invalid kind: %', kind;
+  end if;
+  if not public.is_active_profile() then
+    raise exception 'account disabled' using errcode = '42501';
+  end if;
+  -- Serialize votes for one incident so concurrent recounts cannot overwrite each other.
+  perform 1 from public.incidents i where i.id = target_id for update;
+  if not found then
+    raise exception 'incident not found';
   end if;
 
   insert into public.incident_confirmations (incident_id, user_id, kind)
@@ -219,8 +268,8 @@ begin
      set confirmations = n_confirm,
          status = case
                     when i.status = 'resolved' then 'resolved'
-                    when n_dispute >= dispute_threshold then 'disputed'
-                    when n_confirm >= confirm_threshold then 'confirmed'
+                    when n_dispute >= required_disputes then 'disputed'
+                    when n_confirm >= required_confirmations then 'confirmed'
                     else 'provisional'
                   end
    where i.id = target_id;
@@ -228,6 +277,18 @@ begin
   return query select i.id, i.confirmations, i.status from public.incidents i where i.id = target_id;
 end;
 $$;
+
+-- Functions are not public-by-default API. Grant only the authenticated calls Pulso uses.
+revoke all on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  from public, anon;
+grant execute on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  to authenticated;
+
+revoke all on function public.get_incident_details(uuid) from public, anon;
+grant execute on function public.get_incident_details(uuid) to authenticated;
+
+revoke all on function public.confirm_incident(uuid, text) from public, anon;
+grant execute on function public.confirm_incident(uuid, text) to authenticated;
 
 -- ============================================================================
 -- §6. Storage bucket

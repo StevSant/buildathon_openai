@@ -41,6 +41,13 @@ Deno.serve(async (req) => {
     const verifyIdentity = makeVerifyIdentity({ verifier, profiles });
     const result = await verifyIdentity({ userId, cedula });
 
+    if (!result.verified) {
+      return Response.json(
+        { error: result.reason ?? "Cédula inválida" },
+        { status: 422, headers: corsHeaders },
+      );
+    }
+
     return Response.json(result, { headers: corsHeaders });
   } catch (err) {
     // CONTRACT §4: non-2xx responses always use the { error } envelope.

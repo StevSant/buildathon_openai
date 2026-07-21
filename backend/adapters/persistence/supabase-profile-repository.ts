@@ -35,7 +35,12 @@ export class SupabaseProfileRepository implements ProfileRepository {
       })
       .select()
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (error.code === '23505' || /duplicate key|cedula_hash/i.test(error.message)) {
+        throw new Error('cedula_taken');
+      }
+      throw new Error(error.message);
+    }
 
     return this.toProfile(data as Record<string, any>);
   }

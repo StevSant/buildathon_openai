@@ -45,7 +45,7 @@ export const config = {
   // secret authorizes it); overridable for proxies.
   openaiRealtimeUrl:
     process.env.NEXT_PUBLIC_OPENAI_REALTIME_URL ??
-    "https://api.openai.com/v1/realtime",
+    "https://api.openai.com/v1/realtime/calls",
   // Map / agent search radius.
   defaultRadiusMeters: num(process.env.NEXT_PUBLIC_DEFAULT_RADIUS_METERS, 3000),
   // Proximity-alert thresholds: a nearby incident escalates to a bottom sheet only when it

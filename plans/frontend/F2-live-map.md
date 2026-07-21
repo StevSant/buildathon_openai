@@ -1,5 +1,9 @@
 # F2 — Live Map Implementation Plan
 
+> ⚠️ **Amended by B6/F7 (2026-07-21, ADR-020):** `IncidentDetails` no longer carries
+> `reporter_name` — reports are anonymous to users. Where this plan shows `reporter_name`,
+> read `reporter_verified` only.
+
 > **For the executing engineer (Codex):** implement task-by-task, top to bottom. Steps use
 > checkbox (`- [ ]`) syntax. There are NO automated tests (ADR-015) — you verify each task by
 > running the stated command and observing the described result. Commit after each task.

@@ -52,7 +52,8 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
       throw new Error(`Realtime session mint failed: ${response.status}`);
     }
 
-    // TODO: align with the exact /v1/realtime/client_secrets response shape.
+    // POST /v1/realtime/client_secrets returns { value, expires_at, session }. Older/newer
+    // shapes may nest it under client_secret — read both defensively.
     const data = (await response.json()) as {
       value?: string;
       expires_at?: number;
@@ -60,6 +61,9 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
     };
     const clientSecret = data.client_secret?.value ?? data.value ?? '';
     const expiresAtEpoch = data.client_secret?.expires_at ?? data.expires_at;
+    if (!clientSecret) {
+      throw new Error('Realtime mint returned no client secret');
+    }
     const expiresAt = expiresAtEpoch ? new Date(expiresAtEpoch * 1000).toISOString() : '';
 
     return { clientSecret, expiresAt };

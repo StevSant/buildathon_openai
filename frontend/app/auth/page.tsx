@@ -1,17 +1,18 @@
+import Image from "next/image";
 import { AuthForm } from "@/components";
 
-// Pre-login screen — no tab bar.
+// Pre-login screen — no tab bar. The mark anchors the compact mobile auth layout.
 export default function AuthPage() {
   return (
     <div className="app-shell">
-      <header className="px-5 pt-8">
-        <div className="text-[30px] font-extrabold tracking-tight">
-          Pul<em className="not-italic text-accent">so</em>
-        </div>
-        <p className="mt-1 text-[13px] text-muted">
-          La ciudad en tiempo real, verificada. Reporta con una foto, todos lo ven en el
-          mapa al instante.
-        </p>
+      <header className="px-5 pt-[calc(2rem+env(safe-area-inset-top))]">
+        <Image
+          src="/icons/icon-192.png"
+          alt="Pulso"
+          width={48}
+          height={48}
+          className="h-12 w-12 rounded-[15px] shadow-[0_8px_20px_-10px_var(--accent)]"
+        />
       </header>
       <AuthForm />
     </div>

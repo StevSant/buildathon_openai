@@ -136,9 +136,9 @@ git commit --allow-empty -m "chore(assistant): Cerca voice flow verified end-to-
 ---
 
 ## Notes / optional hardening
-- `realtime-agent.ts` posts the WebRTC offer to `https://api.openai.com/v1/realtime?model=…`.
-  That is OpenAI's fixed public endpoint (not a secret), so a literal is acceptable; if you want
-  zero literals, expose it as `NEXT_PUBLIC_OPENAI_REALTIME_URL` in `config` and use it here.
+- `realtime-agent.ts` posts the WebRTC offer to the configured
+  `https://api.openai.com/v1/realtime/calls` SDP endpoint. The URL is public (not a secret),
+  while the ephemeral client secret authorizes the request.
 - `RealtimeAssistant.start()` already sets `status="error"` if mic/location is denied; the button
   then reads "Error — reintentar". No change required for the demo.
 

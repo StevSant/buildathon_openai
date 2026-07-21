@@ -4,8 +4,8 @@
 
 Canonical schema for Pulso. The SQL below is runnable: paste it into a Supabase migration
 (`backend/supabase/migrations/0001_init.sql`) and run `supabase db push`. It follows Supabase
-conventions — PostGIS lives in the `extensions` schema, and functions use
-`security invoker` with `set search_path = ''`.
+conventions — PostGIS lives in the `extensions` schema, functions pin
+`search_path = ''`, and privileged RPCs have explicit execute grants.
 
 ---
 
@@ -93,13 +93,29 @@ alter table public.profiles                enable row level security;
 alter table public.incidents               enable row level security;
 alter table public.incident_confirmations  enable row level security;
 
--- profiles: a user sees and edits ONLY their own row
+create or replace function public.is_active_profile()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select not exists (
+    select 1 from public.profiles p
+    where p.id = (select auth.uid()) and p.disabled_at is not null
+  );
+$$;
+
+revoke all on function public.is_active_profile() from public, anon;
+grant execute on function public.is_active_profile() to authenticated;
+
+-- profiles: a user sees only their own row; only display_name is client-editable
 create policy "own profile - select" on public.profiles
-  for select using ((select auth.uid()) = id);
-create policy "own profile - upsert" on public.profiles
-  for insert with check ((select auth.uid()) = id);
+  for select to authenticated using ((select auth.uid()) = id);
 create policy "own profile - update" on public.profiles
-  for update using ((select auth.uid()) = id);
+  for update to authenticated
+  using ((select auth.uid()) = id)
+  with check ((select auth.uid()) = id);
 
 -- incidents: any authenticated user reads active incidents
 create policy "incidents - read active" on public.incidents
@@ -109,18 +125,30 @@ create policy "incidents - read active" on public.incidents
 -- incidents: a user may insert only as themselves
 create policy "incidents - insert own" on public.incidents
   for insert to authenticated
-  with check (reporter_id = (select auth.uid()));
+  with check (
+    reporter_id = (select auth.uid())
+    and (select public.is_active_profile())
+  );
 
--- incidents: a user may update only their own report (P1: moderators added later)
-create policy "incidents - update own" on public.incidents
-  for update to authenticated
-  using (reporter_id = (select auth.uid()));
-
--- confirmations: insert as self, read your own
 create policy "confirmations - insert own" on public.incident_confirmations
-  for insert to authenticated with check (user_id = (select auth.uid()));
-create policy "confirmations - read own" on public.incident_confirmations
-  for select to authenticated using (user_id = (select auth.uid()));
+  for insert to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and (select public.is_active_profile())
+  );
+
+-- Direct confirmation-table access and incident updates are intentionally absent.
+
+revoke all on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
+grant update (display_name) on public.profiles to authenticated;
+
+revoke all on public.incidents from anon, authenticated;
+grant select on public.incidents to authenticated;
+grant insert (reporter_id, title, description, category, severity, location, photo_path, expires_at)
+  on public.incidents to authenticated;
+
+revoke all on public.incident_confirmations from anon, authenticated;
 ```
 
 > Seed and Edge Functions using the **service role** bypass RLS; that's expected. RLS
@@ -177,7 +205,7 @@ as $$
 $$;
 ```
 
-### `get_incident_details` — one incident, no reporter PII
+### `get_incident_details` — one active incident, anonymous to users
 ```sql
 create or replace function public.get_incident_details(target_id uuid)
 returns table (
@@ -194,7 +222,7 @@ returns table (
   lat           double precision
 )
 language sql
-security invoker
+security definer
 set search_path = ''
 as $$
   select
@@ -206,6 +234,9 @@ as $$
   from public.incidents i
   left join public.profiles p on p.id = i.reporter_id
   where i.id = target_id
+    and (select auth.uid()) is not null
+    and i.status <> 'resolved'
+    and (i.expires_at is null or i.expires_at > now())
   limit 1;
 $$;
 ```
@@ -216,30 +247,38 @@ Takes a `kind` argument. A user has **one** vote per incident, switchable betwee
 `incidents.confirmations` counts `confirm` votes only; the dispute count stays derived.
 Status rules mirror `core/domain/next-incident-status.ts`: `resolved` is terminal, a dispute
 at threshold wins over a confirmation at threshold, and below both thresholds the incident
-returns to `provisional`. Thresholds are injectable per call (defaults 3; the agent-tools
-composition root passes `CONFIRM_THRESHOLD` / `DISPUTE_THRESHOLD` from env).
+returns to `provisional`. The public RPC exposes only the frozen two-argument contract;
+its thresholds stay private so a direct client cannot lower them to forge status.
 ```sql
 create or replace function public.confirm_incident(
   target_id uuid,
-  kind      text default 'confirm',
-  confirm_threshold integer default 3,
-  dispute_threshold integer default 3
+  kind      text default 'confirm'
 )
 returns table (id uuid, confirmations integer, status text)
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 declare
-  uid       uuid := (select auth.uid());
-  n_confirm integer;
-  n_dispute integer;
+  uid                    uuid := (select auth.uid());
+  required_confirmations constant integer := 3;
+  required_disputes      constant integer := 3;
+  n_confirm              integer;
+  n_dispute              integer;
 begin
   if uid is null then
     raise exception 'not authenticated';
   end if;
   if kind not in ('confirm','dispute') then
     raise exception 'invalid kind: %', kind;
+  end if;
+  if not public.is_active_profile() then
+    raise exception 'account disabled' using errcode = '42501';
+  end if;
+
+  perform 1 from public.incidents i where i.id = target_id for update;
+  if not found then
+    raise exception 'incident not found';
   end if;
 
   insert into public.incident_confirmations (incident_id, user_id, kind)
@@ -257,8 +296,8 @@ begin
      set confirmations = n_confirm,
          status = case
                     when i.status = 'resolved' then 'resolved'
-                    when n_dispute >= dispute_threshold then 'disputed'
-                    when n_confirm >= confirm_threshold then 'confirmed'
+                    when n_dispute >= required_disputes then 'disputed'
+                    when n_confirm >= required_confirmations then 'confirmed'
                     else 'provisional'
                   end
    where i.id = target_id;
@@ -266,6 +305,18 @@ begin
   return query select i.id, i.confirmations, i.status from public.incidents i where i.id = target_id;
 end;
 $$;
+
+revoke all on function public.confirm_incident(uuid, text) from public, anon;
+grant execute on function public.confirm_incident(uuid, text) to authenticated;
+
+-- Functions are not public-by-default API. Grant only the authenticated calls Pulso uses.
+revoke all on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  from public, anon;
+grant execute on function public.get_nearby_incidents(double precision, double precision, integer, text)
+  to authenticated;
+
+revoke all on function public.get_incident_details(uuid) from public, anon;
+grant execute on function public.get_incident_details(uuid) to authenticated;
 ```
 
 ## 6. Storage bucket
@@ -330,7 +381,7 @@ end $$;
 
 The optional safety layer ([ADR-017](DECISIONS.md)). Paste this into a second migration
 (`backend/supabase/migrations/0002_whatsapp_sos.sql`) and `db push`. Same Supabase conventions as
-`0001`: RLS **owner-only**, functions `security invoker` with `set search_path = ''`.
+`0001`: owner-scoped RLS, explicit column privileges, and functions with `set search_path = ''`.
 
 ```sql
 -- whatsapp_config: per-user WhatsApp opt-in + verified own phone
@@ -415,6 +466,21 @@ create policy "dispatch_log - read own" on public.whatsapp_dispatch_log
     where ec.id = whatsapp_dispatch_log.contact_id
       and ec.owner_id = (select auth.uid())
   ));
+
+revoke all on public.whatsapp_config, public.emergency_contacts, public.alert_rules,
+  public.whatsapp_dispatch_log from anon, authenticated;
+grant select on public.whatsapp_config, public.emergency_contacts, public.alert_rules,
+  public.whatsapp_dispatch_log to authenticated;
+grant insert (user_id, enabled, phone_e164) on public.whatsapp_config to authenticated;
+grant update (enabled, phone_e164) on public.whatsapp_config to authenticated;
+grant insert (owner_id, display_name, phone_e164)
+  on public.emergency_contacts to authenticated;
+grant update (display_name, phone_e164)
+  on public.emergency_contacts to authenticated;
+grant insert (user_id, min_severity, radius_meters, center, channel, enabled)
+  on public.alert_rules to authenticated;
+grant update (min_severity, radius_meters, center, channel, enabled)
+  on public.alert_rules to authenticated;
 ```
 
 > `proximity-dispatcher` runs with the **service role** and bypasses RLS to fan out across many
@@ -450,6 +516,9 @@ as $$
     on ec.owner_id = r.user_id and ec.opt_in_status = 'accepted'
   where i.id = target_incident;
 $$;
+
+revoke all on function public.get_alert_matches(uuid) from public, anon, authenticated;
+grant execute on function public.get_alert_matches(uuid) to service_role;
 ```
 
 ### Notes / trade-offs (safety layer)

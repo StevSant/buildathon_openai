@@ -150,6 +150,7 @@ npm run dev                  # Next.js dev server (frontend/)
 # 2. Supabase (project created in dashboard; enable PostGIS extension)
 npm i -g supabase
 supabase login
+cd backend
 supabase link --project-ref <your-ref>
 # migrations live in backend/supabase/migrations/ (0001_init, 0002_whatsapp_sos):
 supabase db push
@@ -181,7 +182,7 @@ NEXT_PUBLIC_ALERT_SEVERITY_MIN=4         # min severity for a bottom-sheet alert
 NEXT_PUBLIC_ALERT_RADIUS_METERS=500      # max distance (m) for a bottom-sheet alert
 NEXT_PUBLIC_VENUE_NAME="Cdla. Primero de Mayo"   # map-header sector label
 NEXT_PUBLIC_VENUE_CITY=Portoviejo                # map-header city label
-NEXT_PUBLIC_OPENAI_REALTIME_URL=https://api.openai.com/v1/realtime   # WebRTC SDP endpoint
+NEXT_PUBLIC_OPENAI_REALTIME_URL=https://api.openai.com/v1/realtime/calls   # WebRTC SDP endpoint
 
 # --- Supabase Edge Function secrets (server-side only) ---
 OPENAI_API_KEY=sk-...

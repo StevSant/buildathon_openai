@@ -159,16 +159,20 @@ is what reaches a user with the app closed.
 only reach a user with the app open. For a personal-safety layer we want a message that
 lands even when nobody is looking at Pulso, plus a way to alert others on your behalf.
 **Decision:** Add a **fifth seam** to the four in [ADR-014](#adr-014--pragmatic-hexagonal-ports--adapters-not-full-hexagonal):
-a **`MessagingGateway`** port (`sendWhatsApp({ to, template, params })`) with a
-**`HermesWhatsAppGateway`** adapter (env: `HERMES_API_URL`, `HERMES_API_KEY`,
-`HERMES_WHATSAPP_FROM`). A new Edge Function **`proximity-dispatcher`** runs on incident
+  a **`MessagingGateway`** port (`sendWhatsApp({ to, kind, context })`) with a
+  **`HermesWhatsAppGateway`** adapter that invokes a signed Hermes alert webhook
+  (`HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_SECRET`). A new Edge Function
+  **`proximity-dispatcher`** runs on incident
 INSERT (via DB trigger/webhook), evaluates every user's `alert_rules` (PostGIS distance ≤
 `radius_meters` **and** severity ≥ `min_severity`) and enqueues WhatsApp sends to that user's
 **accepted** `emergency_contacts` through the port. A manual **SOS** button calls the same
-dispatch path with an SOS template. Adding a contact triggers a WhatsApp **opt-in** ("responde
+  dispatch path with the frozen `{ type: "sos", location: { lat, lng } }` request. The database
+  webhook itself is authenticated with `PROXIMITY_WEBHOOK_SECRET`. Adding a contact triggers a WhatsApp **opt-in** ("responde
 SÍ" to accept / "BAJA" to opt out); status is tracked (`pending`/`accepted`/`declined`) and
-only accepted contacts are ever messaged. New tables land in migration `0002_whatsapp_sos.sql`
-(see [DATA-MODEL §9](DATA-MODEL.md#9-whatsapp--sos-migration-0002)).
+  only accepted contacts are ever messaged. New tables land in migration `0002_whatsapp_sos.sql`
+  (see [DATA-MODEL §9](DATA-MODEL.md#9-whatsapp--sos-migration-0002)).
+  The checked-in scaffold still uses the legacy `HERMES_API_*` adapter; C1 performs the adapter
+  swap. Webhook authentication and per-contact failure isolation apply before and after that swap.
 **Consequences:** Reuses the ports & adapters pattern — the gateway is swappable behind
 `MessagingGateway` (only `HermesWhatsAppGateway` is implemented; a logging fake for local
 dev remains an option) and the dispatcher owns the fan-out so
@@ -202,3 +206,19 @@ behind the 4-tab bottom bar (Mapa · Reportar · Cerca · Perfil).
 on the demo devices; the safety layer ([ADR-017](#adr-017--whatsapp-emergency-alerts-messaginggateway-port--hermes-adapter--proximity-dispatcher))
 has a single home. The screen degrades gracefully — skip WhatsApp and the core four pillars
 are untouched.
+
+## ADR-020 — Reports are anonymous to users; identity remains an abuse gate
+**Context:** Showing a reporter's display name can suppress legitimate reports through fear
+of retaliation. Fully unlinking reports would remove the ability to stop repeat abuse.
+**Decision:** No reporter identity crosses the public incident-detail contract; users see only
+the `Reporte verificado ✓` badge derived from `profiles.verified`. Internally,
+`incidents.reporter_id` remains for moderation. Setting `profiles.disabled_at` blocks new
+incidents and confirmations through RLS and the privileged voting RPC. Profiles are disabled,
+never deleted, so the unique `cedula_hash` remains a tombstone that prevents re-registration.
+The raw cédula remains neither stored nor logged. Signup and reporting disclose that reports
+are anonymous to other users while verified identity is retained to prevent abuse.
+**Consequences:** The visible retaliation vector is removed while manual moderation remains
+possible. For the MVP, authenticated users can still observe the reporter UUID through direct
+incident reads or Realtime payloads, but profiles RLS prevents resolving it to a name. Column
+revocation would break `postgres_changes`; a later hardening path is database broadcast plus
+revoked direct access.
