@@ -47,7 +47,7 @@ export default function NotificationsPage() {
         if (active) setRows([]);
       });
 
-    const channel = subscribeToNotificationIncidents(() => {
+    const channel = subscribeToNotificationIncidents("center", () => {
       void getNearbyIncidents(location)
         .then((data) => {
           if (active) setRows(data);

@@ -77,7 +77,7 @@ export default function NotificationHost() {
   }, [showIncident]);
 
   useEffect(() => {
-    const channel = subscribeToNotificationIncidents(() => void refresh());
+    const channel = subscribeToNotificationIncidents("host", () => void refresh());
 
     if (!navigator.geolocation) {
       void refresh();
