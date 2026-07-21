@@ -10,6 +10,8 @@ export { default as RealtimeAssistant } from "./RealtimeAssistant";
 export { default as AssistantIncidentCards } from "./AssistantIncidentCards";
 export { default as AssistantIncidentDetailCard } from "./AssistantIncidentDetailCard";
 export { default as AssistantIncidentMap } from "./AssistantIncidentMap";
+export { default as AssistantTurnList } from "./AssistantTurnList";
+export { default as AssistantConversation } from "./AssistantConversation";
 export { default as IncidentDetailSheet } from "./IncidentDetailSheet";
 export { default as IncidentComments } from "./IncidentComments";
 export { default as NotificationBell } from "./NotificationBell";
