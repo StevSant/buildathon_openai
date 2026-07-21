@@ -3,6 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import Map, { Marker, type MapRef } from "react-map-gl/maplibre";
 import type { Category, IncidentStatus, NearbyIncident } from "@pulso/core";
 import { IncidentDetailSheet, Icon, NotificationBell } from "@/components";
@@ -98,6 +99,10 @@ export default function IncidentMap() {
   const [loading, setLoading] = useState(true);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [sheetHeight, setSheetHeight] = useState(0);
+  const [sheetHidden, setSheetHidden] = useState(false);
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const sheetPointerStartY = useRef<number | null>(null);
+  const sheetDragDistance = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -160,10 +165,31 @@ export default function IncidentMap() {
   // clear of the sheet regardless of how many incident rows render.
   useEffect(() => {
     setSheetHeight(sheetRef.current?.offsetHeight ?? 0);
-  }, [incidents, loading, selectedIncidentId]);
+  }, [incidents, loading, selectedIncidentId, sheetHidden]);
 
   const activeCount = incidents.length;
-  const fabBottom = sheetHeight > 0 ? sheetHeight + 16 : 24;
+  const fabBottom = sheetHidden ? 24 : Math.max(24, sheetHeight - sheetDragY + 16);
+
+  function releaseSheetHandle(): void {
+    const shouldHide = sheetDragDistance.current > (sheetRef.current?.offsetHeight ?? 0) / 4;
+    setSheetHidden(shouldHide);
+    setSheetDragY(0);
+    sheetPointerStartY.current = null;
+    sheetDragDistance.current = 0;
+  }
+
+  function startSheetDrag(event: ReactPointerEvent<HTMLDivElement>): void {
+    sheetPointerStartY.current = event.clientY;
+    sheetDragDistance.current = 0;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function dragSheet(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (sheetPointerStartY.current === null) return;
+    const distance = Math.max(0, event.clientY - sheetPointerStartY.current);
+    sheetDragDistance.current = distance;
+    setSheetDragY(distance);
+  }
 
   return (
     <section className="s-map" aria-label="Mapa de incidentes">
@@ -259,9 +285,31 @@ export default function IncidentMap() {
                 </div>
               </div>
             </div>
-          ) : activeCount > 0 ? (
-            <div className="sheet" ref={sheetRef}>
-              <div className="grab" />
+          ) : activeCount > 0 && !sheetHidden ? (
+            <div
+              className="sheet"
+              ref={sheetRef}
+              style={{
+                transform: `translateY(${sheetDragY}px)`,
+                transition: sheetPointerStartY.current === null ? "transform 180ms ease-out" : "none",
+              }}
+            >
+              <div
+                className="grab"
+                role="button"
+                tabIndex={0}
+                aria-label="Desliza hacia abajo para ocultar incidentes cercanos"
+                onPointerDown={startSheetDrag}
+                onPointerMove={dragSheet}
+                onPointerUp={releaseSheetHandle}
+                onPointerCancel={releaseSheetHandle}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSheetHidden(true);
+                  }
+                }}
+              />
               <h3>
                 Cerca de ti · <b>{activeCount} incidentes activos</b>
               </h3>
@@ -302,6 +350,15 @@ export default function IncidentMap() {
                 );
               })}
             </div>
+          ) : activeCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setSheetHidden(false)}
+              className="rounded-full border border-line bg-panel px-4 py-2 text-[12px] font-bold text-ink shadow-[0_8px_22px_rgba(0,0,0,0.25)]"
+              style={{ position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", zIndex: 3 }}
+            >
+              Mostrar {activeCount} incidentes cercanos
+            </button>
           ) : (
             <div className="empty" style={{ pointerEvents: "none" }}>
               <div className="ring">
