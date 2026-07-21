@@ -26,11 +26,14 @@ test("continues alert fan-out after an individual gateway failure", async () => 
   const result = await dispatch({
     kind: "sos",
     userId: "user-1",
-    template: "pulso_sos",
   });
 
   assert.deepEqual(attempts, contacts.map((contact) => contact.phone));
   assert.equal(result.sent, 2);
   assert.equal(result.failed, 1);
-  assert.deepEqual(result.results[1], { id: "contact-2", status: "failed" });
+  assert.deepEqual(result.results[1], {
+    contactId: "contact-2",
+    id: "",
+    status: "failed",
+  });
 });

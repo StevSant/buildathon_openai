@@ -1,5 +1,7 @@
 # C1 — Hermes Chat Integration Implementation Plan (integrations lane, Person C)
 
+**Status:** Implemented on `main`; retained as the deployment and verification record.
+
 > **For agentic workers:** implement task-by-task, top to bottom. Steps use checkbox (`- [ ]`)
 > syntax. There are **NO automated tests** (ADR-015) — verify each task by running the stated
 > command and observing the described result. Commit after each task (Conventional Commits,

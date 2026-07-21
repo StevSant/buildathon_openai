@@ -138,14 +138,9 @@ DISPUTE_THRESHOLD=3                      # disputes → 'disputed' (confirm_inci
 TRUST_VERIFIED_BONUS=10                  # trust-score weights (helper not wired yet)
 TRUST_PER_CONFIRMED=2
 TRUST_PER_DISPUTED=3
-HERMES_API_URL=                          # (P2) current Hermes send endpoint — empty = disabled
-HERMES_API_KEY=                          # (P2) current Hermes API credential
-HERMES_WHATSAPP_FROM=                    # (P2) current sender number/id
-WHATSAPP_PROXIMITY_TEMPLATE=pulso_proximity_alert
-WHATSAPP_SOS_TEMPLATE=pulso_sos
-HERMES_WEBHOOK_URL=                      # (C1 target) Hermes pulso-alerts webhook URL
-HERMES_WEBHOOK_SECRET=                   # (C1 target) signed dispatcher requests
-PROXIMITY_WEBHOOK_SECRET=                # (P2) authenticates Supabase DB-webhook fan-out
+HERMES_WEBHOOK_URL=                      # (P2 safety layer) Hermes pulso-alerts webhook URL
+HERMES_WEBHOOK_SECRET=                   # (P2) HMAC V2 secret shared with Hermes
+PROXIMITY_WEBHOOK_SECRET=                # (P2) database-webhook guard for proximity-dispatcher
 TIMEZONE=America/Guayaquil
 DEFAULT_LANGUAGE=es
 ```

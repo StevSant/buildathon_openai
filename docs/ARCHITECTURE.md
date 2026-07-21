@@ -116,11 +116,10 @@ components/
 
 ### 2.4 Messaging — WhatsApp via Hermes (optional safety layer)
 The `proximity-dispatcher` function sends outbound WhatsApp through the **`MessagingGateway`**
-port. The current scaffold adapter uses `HERMES_API_URL`, `HERMES_API_KEY`, and
-`HERMES_WHATSAPP_FROM`; integration plan C1 swaps that adapter to the signed Hermes webhook
-(`HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_SECRET`). In both versions, the database webhook invoking
-the dispatcher is independently authenticated with `PROXIMITY_WEBHOOK_SECRET`. This is the only
-channel that reaches a user with the app closed, and it is a P1/P2 layer — **not a core pillar**
+port. The adapter invokes the signed Hermes `pulso-alerts` webhook using
+`HERMES_WEBHOOK_URL` and `HERMES_WEBHOOK_SECRET`. The database webhook invoking the dispatcher
+is independently authenticated with `PROXIMITY_WEBHOOK_SECRET`. This is the only channel that
+reaches a user with the app closed, and it is a P1/P2 layer — **not a core pillar**
 ([ADR-017](DECISIONS.md)).
 
 ## 3. Core flows
@@ -323,8 +322,7 @@ Nothing hardcoded. All tunables are environment variables.
 | `INCIDENT_TTL_HOURS` | Edge secret | Incident expiry (adapter `create()` path; DB default 24h) |
 | `CONFIRM_THRESHOLD` / `DISPUTE_THRESHOLD` | Edge secret | Votes needed to flip status (passed to `confirm_incident`) |
 | `TRUST_VERIFIED_BONUS` / `TRUST_PER_CONFIRMED` / `TRUST_PER_DISPUTED` | Edge secret | Trust-score weights (helper not wired yet) |
-| `HERMES_API_URL` / `_API_KEY` / `HERMES_WHATSAPP_FROM` | Edge secret | Current scaffold Hermes adapter |
-| `HERMES_WEBHOOK_URL` / `_WEBHOOK_SECRET` | Edge secret | C1 target Hermes alert webhook + shared secret |
+| `HERMES_WEBHOOK_URL` / `_WEBHOOK_SECRET` | Edge secret | Hermes alert webhook + HMAC signing secret |
 | `PROXIMITY_WEBHOOK_SECRET` | Edge secret | Authenticates the database webhook invoking the dispatcher |
 | `TIMEZONE` / `DEFAULT_LANGUAGE` | Edge secret | Locale (`America/Guayaquil`, `es`) |
 
@@ -333,7 +331,7 @@ Nothing hardcoded. All tunables are environment variables.
 - **Backend:** Supabase Cloud — apply migrations (`0001_init`, `0002_whatsapp_sos`), deploy the
   five Edge Functions, set secrets. For the safety layer, wire the DB trigger/webhook on
   `incidents` INSERT → `proximity-dispatcher`, include `x-pulso-webhook-secret`, and set the
-  current Hermes adapter plus proximity-webhook secrets (C1 later swaps the adapter secrets).
+  Hermes webhook/signing secrets plus the independent proximity-webhook secret.
 - **Demo devices:** at least two (phone + laptop) to show the collaborative live map.
 
 ## 8. Code architecture — pragmatic hexagonal (ports & adapters)

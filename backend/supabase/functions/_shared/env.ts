@@ -33,13 +33,9 @@ export function getEnv() {
     identityVerifyApiUrl: optional("IDENTITY_VERIFY_API_URL"),
     identityVerifyApiKey: optional("IDENTITY_VERIFY_API_KEY"),
 
-    // WhatsApp gateway (Hermes)
-    hermesApiUrl: optional("HERMES_API_URL"),
-    hermesApiKey: optional("HERMES_API_KEY"),
-    hermesFrom: optional("HERMES_WHATSAPP_FROM"),
-    whatsappProximityTemplate:
-      Deno.env.get("WHATSAPP_PROXIMITY_TEMPLATE") ?? "pulso_proximity_alert",
-    whatsappSosTemplate: Deno.env.get("WHATSAPP_SOS_TEMPLATE") ?? "pulso_sos",
+    // Hermes Agent webhook (outbound WhatsApp alerts)
+    hermesWebhookUrl: optional("HERMES_WEBHOOK_URL"),
+    hermesWebhookSecret: optional("HERMES_WEBHOOK_SECRET"),
     proximityWebhookSecret: optional("PROXIMITY_WEBHOOK_SECRET"),
 
     // Query bounds / thresholds / locale

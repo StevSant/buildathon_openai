@@ -1,0 +1,154 @@
+"""Pulso MCP shim running locally on the Hermes VM.
+
+It maps a WhatsApp sender to a Pulso account, mints a short-lived authenticated
+Supabase JWT, and forwards calls to the frozen `agent-tools` Edge Function.
+"""
+
+import json
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import jwt
+from mcp.server.fastmcp import FastMCP
+
+AGENT_TOOLS_URL = os.environ["AGENT_TOOLS_URL"]
+SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+SUPABASE_JWT_SECRET = os.environ["SUPABASE_JWT_SECRET"]
+SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+mcp = FastMCP("pulso")
+
+
+def _normalize_sender(sender: str) -> str:
+    digits = "".join(char for char in sender if char.isdigit())
+    if not 8 <= len(digits) <= 15:
+        raise ValueError("No pude validar el número de WhatsApp.")
+    return f"+{digits}"
+
+
+def _mint_user_jwt(user_id: str) -> str:
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "sub": user_id,
+            "role": "authenticated",
+            "aud": "authenticated",
+            "iat": now,
+            "exp": now + 300,
+        },
+        SUPABASE_JWT_SECRET,
+        algorithm="HS256",
+    )
+
+
+def _request_json(url: str, headers: dict[str, str], data: bytes | None = None) -> object:
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")[:500]
+        raise ValueError(f"Pulso no pudo completar la consulta ({error.code}): {detail}") from error
+    except urllib.error.URLError as error:
+        raise ValueError("No pude conectar con Pulso en este momento.") from error
+
+
+def _resolve_user_id(sender: str) -> str:
+    phone = _normalize_sender(sender)
+    query = urllib.parse.urlencode({"select": "user_id", "phone_e164": f"eq.{phone}", "limit": "1"})
+    rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/whatsapp_config?{query}",
+        {"apikey": SERVICE_KEY, "authorization": f"Bearer {SERVICE_KEY}"},
+    )
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        raise ValueError("Tu número no está vinculado a Pulso. Configúralo primero en la app.")
+    user_id = rows[0].get("user_id")
+    if not isinstance(user_id, str):
+        raise ValueError("No pude identificar tu cuenta de Pulso.")
+    return user_id
+
+
+def _resolve_alert_center(user_id: str) -> tuple[float, float]:
+    query = urllib.parse.urlencode(
+        {
+            "user_id": f"eq.{user_id}",
+            "enabled": "is.true",
+            "center": "not.is.null",
+            "order": "created_at.desc",
+            "limit": "1",
+        }
+    )
+    document = _request_json(
+        f"{SUPABASE_URL}/rest/v1/alert_rules?{query}",
+        {
+            "apikey": SERVICE_KEY,
+            "authorization": f"Bearer {SERVICE_KEY}",
+            "accept": "application/geo+json",
+        },
+    )
+    features = document.get("features") if isinstance(document, dict) else None
+    geometry = features[0].get("geometry") if isinstance(features, list) and features else None
+    coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+    if not isinstance(coordinates, list) or len(coordinates) != 2:
+        raise ValueError("No tienes una ubicación de alerta activa. Configúrala en Pulso para consultar cerca de ti.")
+    lng, lat = coordinates
+    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+        raise ValueError("La ubicación de alerta de Pulso no es válida.")
+    return float(lat), float(lng)
+
+
+def _call_agent_tools(tool: str, arguments: dict[str, object], bearer: str) -> object:
+    payload = json.dumps({"tool": tool, "arguments": arguments}).encode("utf-8")
+    return _request_json(
+        AGENT_TOOLS_URL,
+        {"content-type": "application/json", "authorization": f"Bearer {bearer}"},
+        payload,
+    )
+
+
+def _identity(sender: str) -> tuple[str, str]:
+    user_id = _resolve_user_id(sender)
+    return user_id, _mint_user_jwt(user_id)
+
+
+@mcp.tool()
+def get_nearby_incidents(
+    sender: str,
+    radius_meters: int = 3000,
+    filter_category: str | None = None,
+) -> object:
+    """Returns active incidents near the sender's saved Pulso alert-rule location."""
+    user_id, bearer = _identity(sender)
+    lat, lng = _resolve_alert_center(user_id)
+    return _call_agent_tools(
+        "get_nearby_incidents",
+        {
+            "user_lat": lat,
+            "user_long": lng,
+            "radius_meters": radius_meters,
+            "filter_category": filter_category,
+        },
+        bearer,
+    )
+
+
+@mcp.tool()
+def get_incident_details(sender: str, incident_id: str) -> object:
+    """Returns the public details of one incident UUID."""
+    _, bearer = _identity(sender)
+    return _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer)
+
+
+@mcp.tool()
+def confirm_incident(sender: str, incident_id: str, kind: str = "confirm") -> object:
+    """Registers a confirm or dispute vote for an incident."""
+    _, bearer = _identity(sender)
+    vote = "dispute" if kind == "dispute" else "confirm"
+    return _call_agent_tools("confirm_incident", {"incident_id": incident_id, "kind": vote}, bearer)
+
+
+if __name__ == "__main__":
+    mcp.run()

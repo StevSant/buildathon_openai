@@ -6,7 +6,7 @@
 # ── Model: OpenAI (Buildathon rubric — "Uso de OpenAI") ─────────────────────────
 model:
   provider: openai              # or "custom" (+ base_url) for the event's OpenAI-compatible gateway
-  default: gpt-5.6-terra        # event model; swap to an id your OPENAI_API_KEY can reach
+  default: gpt-4o-mini          # use `hermes model` to choose an id your key can reach
   context_length: 200000
   # base_url: ${OPENAI_BASE_URL}   # only with provider: custom
 
@@ -20,8 +20,9 @@ agent:
 # Tools surface as mcp_pulso_get_nearby_incidents / _get_incident_details / _confirm_incident.
 mcp_servers:
   pulso:
-    command: python
-    args: ["/root/.hermes/pulso_mcp.py"]
+    command: python3
+    # Hermes runs as azureuser on the current VM, not as root.
+    args: ["/home/azureuser/.hermes/pulso_mcp.py"]
     env:
       AGENT_TOOLS_URL: ${AGENT_TOOLS_URL}
       SUPABASE_URL: ${SUPABASE_URL}
@@ -44,6 +45,8 @@ terminal:
 # NOTE: verify exact nesting on the VM with `hermes config get` — repo shows platform
 # behaviour under `platforms:`; some versions expose `whatsapp:` at top level.
 platforms:
+  webhook:
+    enabled: true
   whatsapp:
     extra:
       reply_prefix: ""                    # no "[Hermes]" header on replies

@@ -176,7 +176,7 @@ See the deployable files in [`docs/hermes/`](hermes/). Summary:
 
 | File (`~/.hermes/`) | Purpose | Key entries |
 |---|---|---|
-| `.env` | secrets | `WHATSAPP_ENABLED`, `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS`, `OPENAI_API_KEY`, `AGENT_TOOLS_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `PULSO_WEBHOOK_SECRET` |
+| `.env` | secrets | `WHATSAPP_ENABLED`, `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS`, `OPENAI_API_KEY`, `AGENT_TOOLS_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `WEBHOOK_SECRET` |
 | `config.yaml` | behaviour | `model:` (OpenAI), `platforms.whatsapp`, `mcp_servers.pulso` (→ toolset `mcp-pulso`), `platform_toolsets.whatsapp: [mcp-pulso]` (allowlist), `terminal.backend: docker` |
 | `SOUL.md` | personality | agent identity, tone, tool rules, safety (§9) |
 | `auth.json` | OAuth | only if Nous Portal is used for the model |
@@ -200,18 +200,18 @@ system-prompt slot #1). It reuses the **"Cerca"** identity from the in-app voice
 tool-use rules, incident-status semantics, WhatsApp formatting limits, privacy, and emergency
 redirection.
 
-## 10. What changes in the Pulso repo (for the implementation plan)
+## 10. Implemented Pulso repository changes
 
-Design-only for now; these are the code edits `writing-plans` will sequence:
+The Hermes integration now includes these repository changes:
 
-1. **New (VM-side, not backend):** `~/.hermes/pulso_mcp.py` — a stdio MCP shim that phone-matches
+1. **VM-side:** `docs/hermes/pulso_mcp.py` — a stdio MCP shim that phone-matches
    the sender, mints an `authenticated` JWT, and forwards `tools/call` to the **existing**
    `agent-tools` edge function. No new Supabase edge function; the backend stays frozen.
-2. **Rework:** `HermesWhatsAppGateway` → POST to `HERMES_WEBHOOK_URL` with the shared secret.
-3. **Rework:** `proximity-dispatcher` → send `{ to, kind, incident }` per recipient; drop templates.
-4. **Edit:** `_shared/env.ts` + repo `.env.example` → use `HERMES_WEBHOOK_URL`,
+2. **Adapter:** `HermesWhatsAppGateway` POSTs to `HERMES_WEBHOOK_URL` with HMAC V2 signing.
+3. **Dispatcher:** `proximity-dispatcher` sends `{ to, kind, context }` per recipient; templates are retired.
+4. **Environment:** `_shared/env.ts` + repo `.env.example` use `HERMES_WEBHOOK_URL`,
    `HERMES_WEBHOOK_SECRET`, and `PROXIMITY_WEBHOOK_SECRET`.
-5. **Update:** ADR-017 to reflect Hermes-as-agent; note WhatsApp remains a P1/P2 cuttable layer.
+5. **Decision:** ADR-017 reflects Hermes-as-agent; WhatsApp remains a P1/P2 cuttable layer.
 
 ## 11. Rubric fit
 
