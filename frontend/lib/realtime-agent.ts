@@ -60,7 +60,9 @@ async function runTool(
     },
     body: JSON.stringify({
       tool: toolName,
-      arguments: { ...args, user_lat: location.lat, user_long: location.long },
+      // The bridge injects the user's real location (never the model). agent-tools reads
+      // lat/lng (CONTRACT §5); only get_nearby_incidents uses them, extra keys are ignored.
+      arguments: { ...args, lat: location.lat, lng: location.long },
     }),
   });
   if (!res.ok) throw new Error(`agent-tools (${toolName}) falló: ${res.status}`);
