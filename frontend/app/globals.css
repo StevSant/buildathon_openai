@@ -388,6 +388,7 @@ body {
 .comment p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .comment-meta { display: block; margin-top: 5px; font-size: 10px; font-weight: 700; color: var(--muted); }
 .comments-empty { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.comment-form { margin-top: 14px; }
 .comment-form textarea { width: 100%; min-height: 74px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: var(--ink); padding: 10px; font: inherit; font-size: 12px; outline: none; }
 .comment-form textarea:focus { border-color: var(--accent); }
 .comment-form-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10px; }
