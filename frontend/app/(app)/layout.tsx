@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { TabBar } from "@/components";
+import { NotificationHost, TabBar } from "@/components";
 import { getSession, onAuthChange } from "@/lib";
 
 // Post-login shell: guards the route group and mounts the persistent bottom tab bar.
@@ -46,6 +46,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <main className="flex flex-1 flex-col overflow-hidden">{children}</main>
+      <NotificationHost />
       <TabBar />
     </div>
   );

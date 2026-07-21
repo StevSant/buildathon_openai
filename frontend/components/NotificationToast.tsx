@@ -24,7 +24,8 @@ export default function NotificationToast({
     <button
       type="button"
       onClick={onOpen ?? onDismiss}
-      className="absolute inset-x-3.5 top-24 z-10 flex items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-[13px] font-semibold text-ink shadow-[0_12px_30px_-12px_#000]"
+      aria-label={`Abrir notificación: ${title}`}
+      className="absolute inset-x-3.5 top-24 z-10 flex items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-[13px] font-semibold text-ink shadow-[0_12px_30px_-12px_#000] transition-transform active:scale-[0.99]"
       style={{
         background: "color-mix(in srgb, var(--ok) 16%, var(--panel))",
         borderColor: "color-mix(in srgb, var(--ok) 45%, transparent)",
@@ -42,7 +43,8 @@ export default function NotificationToast({
       >
         <path d="M4 12.5 9 17.5 20 6.5" />
       </svg>
-      <span>{title}</span>
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      <span className="text-[10px] font-bold text-ok">Ver</span>
     </button>
   );
 }

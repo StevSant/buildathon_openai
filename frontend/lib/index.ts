@@ -11,7 +11,7 @@ export {
   subscribeToIncidents,
 } from "./incidents";
 export { REALTIME_TOOLS } from "./realtime-tools";
-export { decideAlertTier } from "./notifications";
+export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";
 export { startRealtimeSession } from "./realtime-agent";
 export type {

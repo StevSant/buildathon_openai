@@ -16,7 +16,11 @@ export default function NotificationBottomSheet({
   onDismiss: () => void;
 }) {
   return (
-    <div className="absolute inset-x-3 bottom-3.5 z-20 rounded-[20px] border border-line bg-panel-2 p-4 shadow-[0_-20px_50px_-20px_#000]">
+    <section
+      aria-label="Alerta cerca de ti"
+      aria-live="assertive"
+      className="absolute inset-x-3 bottom-3.5 z-20 rounded-[20px] border border-line bg-panel-2 p-4 shadow-[0_-20px_50px_-20px_#000]"
+    >
       <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-line" />
       <div className="flex items-center gap-3">
         <span className="flex h-[46px] w-[46px] flex-none items-center justify-center rounded-[14px] bg-sev-fire text-[#08121a]">
@@ -50,18 +54,18 @@ export default function NotificationBottomSheet({
         <button
           type="button"
           onClick={onViewOnMap}
-          className="flex w-full items-center justify-center rounded-[14px] bg-accent px-3 py-3 text-sm font-bold text-accent-ink"
+          className="flex w-full items-center justify-center rounded-[14px] bg-accent px-3 py-3 text-sm font-bold text-accent-ink shadow-[0_8px_22px_-10px_var(--accent)] transition-transform active:scale-[0.98]"
         >
           Ver en el mapa
         </button>
         <button
           type="button"
           onClick={onDismiss}
-          className="flex w-full items-center justify-center rounded-[14px] border border-line bg-panel-2 px-3 py-3 text-sm font-bold text-ink"
+          className="flex w-full items-center justify-center rounded-[14px] border border-line bg-panel-2 px-3 py-3 text-sm font-bold text-ink transition-colors hover:bg-panel-3"
         >
           Descartar
         </button>
       </div>
-    </div>
+    </section>
   );
 }
