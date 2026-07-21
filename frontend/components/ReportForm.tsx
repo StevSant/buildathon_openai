@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORY_VALUES, clampSeverity } from "@pulso/core";
 import type { Category, Severity } from "@pulso/core";
@@ -55,10 +55,12 @@ export default function ReportForm() {
   const [location, setLocation] = useState<ReportLocation | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const analysisRequestId = useRef(0);
 
   async function onPickPhoto(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    const requestId = ++analysisRequestId.current;
 
     setError(null);
     setFields(null);
@@ -130,12 +132,14 @@ export default function ReportForm() {
       }
 
       const analysis = (await analysisResponse.json()) as AnalyzedFields;
+      if (requestId !== analysisRequestId.current) return;
       setPhotoPath(path);
       setFields({ ...analysis, severity: clampSeverity(analysis.severity) });
       setIsCategoryConfirmed(analysis.category !== "other");
       setLocation(resolvedLocation);
       setPhase("ready");
     } catch (reason) {
+      if (requestId !== analysisRequestId.current) return;
       setError(reason instanceof Error ? reason.message : "No pudimos analizar la foto");
       setPhase("idle");
     }
@@ -246,7 +250,7 @@ export default function ReportForm() {
               </span>
               <select
                 aria-label="Categoría"
-                value={fields.category}
+                value={isCategoryConfirmed ? fields.category : ""}
                 onChange={(event) => chooseCategory(event.target.value as Category)}
                 style={{
                   position: "absolute",
@@ -258,6 +262,9 @@ export default function ReportForm() {
                   cursor: "pointer",
                 }}
               >
+                <option value="" disabled>
+                  Elige una categoría
+                </option>
                 {CATEGORY_VALUES.map((value) => (
                   <option key={value} value={value}>
                     {CATEGORY_LABELS[value]}
