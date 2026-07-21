@@ -27,6 +27,7 @@ export function getEnv() {
     openaiRealtimeModel: Deno.env.get("OPENAI_REALTIME_MODEL") ?? "gpt-realtime",
     openaiVisionModel: Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-5.6-terra",
     openaiRealtimeVoice: Deno.env.get("OPENAI_REALTIME_VOICE") ?? "marin",
+    openaiTranscribeModel: Deno.env.get("OPENAI_TRANSCRIBE_MODEL") ?? "gpt-4o-mini-transcribe",
 
     // Identity verification
     cedulaHashPepper: optional("CEDULA_HASH_PEPPER"),

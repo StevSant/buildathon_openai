@@ -61,8 +61,9 @@ async function runTool(
     body: JSON.stringify({
       tool: toolName,
       // The bridge injects the user's real location (never the model). agent-tools reads
-      // lat/lng (CONTRACT §5); only get_nearby_incidents uses them, extra keys are ignored.
-      arguments: { ...args, lat: location.lat, lng: location.long },
+      // user_lat/user_long (CONTRACT §5); only get_nearby_incidents uses them, extra keys
+      // are ignored.
+      arguments: { ...args, user_lat: location.lat, user_long: location.long },
     }),
   });
   if (!res.ok) throw new Error(`agent-tools (${toolName}) falló: ${res.status}`);
@@ -126,8 +127,13 @@ export async function startRealtimeSession(
       return;
     }
 
-    // Surface transcripts for the on-screen conversation.
-    if (msg.type === "response.audio_transcript.done" && msg.transcript) {
+    // Surface transcripts for the on-screen conversation. GA sessions emit
+    // response.output_audio_transcript.done; the beta name is kept as a fallback.
+    if (
+      (msg.type === "response.output_audio_transcript.done" ||
+        msg.type === "response.audio_transcript.done") &&
+      msg.transcript
+    ) {
       callbacks.onAgentTranscript?.(msg.transcript);
       return;
     }

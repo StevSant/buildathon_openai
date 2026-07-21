@@ -12,3 +12,4 @@ backend/supabase/.branches
 
 .vercel
 .env*
+.deploy/
