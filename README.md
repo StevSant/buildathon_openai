@@ -39,12 +39,20 @@ Pulso ships as a **mobile-first, installable PWA** — it runs in the phone's br
 `manifest.json` for "Add to Home Screen". No native build, no app install: judges open a
 URL on their own phone. See [ADR-013](docs/DECISIONS.md).
 
-## Repository layout
+## Architecture at a glance
 
-Three file-owned delivery lanes keep the team moving independently: `frontend/` (Next.js),
-`backend/` (Supabase + shared hexagon), and `plans/integrations/` (Hermes, deployment, and
-demo delivery). Pragmatic hexagonal (ports & adapters): a dependency-free `backend/core/`
-is shared by the app (Node) and the Edge Functions (Deno). See
+Pulso has two runtime layers and three delivery lanes. The runtime stays deliberately small:
+the browser is a thin Next.js client, while Supabase owns auth, Postgres/PostGIS, storage,
+realtime, and Edge Functions. The delivery lanes keep parallel work reviewable:
+
+| Lane | Owns | Review first |
+|---|---|---|
+| **Frontend** | `frontend/` — map, report, identity, voice and safety screens | user journey and browser permissions |
+| **Backend** | `backend/core/`, `backend/adapters/`, `backend/supabase/` — domain, ports, adapters and functions | contracts, RLS and data flows |
+| **Integrations & delivery** | `plans/integrations/`, deployment runbooks and rubric evidence | cloud wiring, demo proof and docs |
+
+Pragmatic hexagonal architecture keeps business rules in dependency-free `backend/core/` and
+injects OpenAI, Supabase and Hermes adapters at each Edge Function composition root. See
 [ARCHITECTURE §8](docs/ARCHITECTURE.md#8-code-architecture--pragmatic-hexagonal-ports--adapters)
 and [`plans/CONTRACT.md`](plans/CONTRACT.md) for the frozen frontend↔backend seam.
 
@@ -58,8 +66,63 @@ backend/
     functions/        # verify-identity · analyze-report · create-realtime-session
                       # agent-tools · proximity-dispatcher (thin handlers + composition roots)
 docs/                 # PRD · ARCHITECTURE · DATA-MODEL · DECISIONS · PLAN · DEMO · PITCH
-plans/                # contract + orchestration + frontend/backend/integrations lanes
+plans/                # CONTRACT.md + 00-README.md + Codex plans for all three delivery lanes
 ```
+
+The optional safety layer follows a separate path: `incidents` INSERT →
+`proximity-dispatcher` → Hermes `pulso-alerts` webhook → WhatsApp. It is intentionally not a
+fifth product pillar.
+
+## OpenAI as the product's fuel
+
+OpenAI is used where it removes friction or makes the data more accessible; deterministic
+authorization and persistence remain in Supabase. The model never decides who may read or
+write data.
+
+| Model/API | Why this choice | Data in → action out | Human control and test |
+|---|---|---|---|
+| **`gpt-5.6-terra` via Responses API (vision + structured outputs)** | Turns a photo into a consistent incident draft without forcing a citizen to type in an emergency | photo bytes/path → category, severity, title and description matching the report schema | The reporter reviews and edits every field before **Publish**. The `/report` flow is the manual acceptance test; the schema and adapter typecheck are local checks. |
+| **OpenAI Realtime API (`gpt-realtime`) — voice persona “Cerca”** | Makes nearby information usable while walking, driving or carrying something | Spanish speech + location context → tool calls (`get_nearby_incidents`, `get_incident_details`) → spoken answer grounded in PostGIS rows | The browser supplies location and bridges tool calls; Edge Functions and RLS authorize them. The voice script in [`docs/DEMO.md`](docs/DEMO.md) is the rehearsal test; live audio/model evidence is captured by C2. |
+
+The model IDs above are the Build Week configuration. C2 must record the exact IDs available in
+the provisioned OpenAI account before the final demo; no README claim should imply a model was
+live-tested when it was only configured.
+
+## Evidence for the four pillars
+
+The final submission needs one readable capture per pillar. C2 owns the live URL and model
+notes; until that run is available, the labels below are explicit evidence slots rather than
+claims of completion.
+
+| Pillar | Evidence to attach | Owner/action |
+|---|---|---|
+| Collaborative live map | `[PENDING C2: screenshot or GIF showing an INSERT appear on a second client]` | C2: capture laptop + phone and add the asset link here |
+| Photo → AI report | `[PENDING C2: screenshot showing photo analysis and the review-before-publish step]` | C2: capture `/report` with the generated fields visible |
+| Voice “Cerca” | `[PENDING C2: short recording or screenshot of the Realtime session answering from a tool result]` | C2: capture the Spanish question and grounded answer |
+| Verified identity badge | `[PENDING C2: screenshot of the incident detail with “Reporte verificado” badge]` | C2: capture a seeded or freshly published report |
+| Public demo | `[PENDING C2: deployed URL — replace this label with the canonical HTTPS URL]` | C2: paste the final URL and confirm the commit deployed |
+| Model notes | `[PENDING C2: exact vision and Realtime model IDs used in the live run]` | C2: record IDs, date and any fallback model |
+
+## ODS alignment and one honest metric
+
+- **ODS 11 — Sustainable Cities and Communities (primary):** a shared, real-time incident
+  layer helps residents make safer decisions and makes local knowledge visible.
+- **ODS 13 — Climate Action (secondary):** flood and fire reports turn early observations
+  into actionable community awareness.
+
+The demo metric is **median seconds from a reporter pressing Publish to the new marker being
+visible on a second client**. C2 should measure at least three runs, report the median (or say
+that the run was not captured), and include the timestamped evidence with the demo notes. We do
+not claim a number before measuring it.
+
+## Codex and agents as the build tool
+
+We used a plan-first, three-lane workflow: each prompt in `plans/frontend/`, `plans/backend/`
+and `plans/integrations/` names its owned files, contracts and verification steps. The shared
+`plans/CONTRACT.md` is the seam; B1+B6 freeze the data/RLS contract before integration work;
+C2 captures cloud/demo evidence; C3 turns that evidence into a judge-readable README. Codex
+agents execute bounded tasks, save non-obvious decisions, and leave a review trail instead of
+letting parallel edits silently redefine the architecture.
 
 ## Documentation
 

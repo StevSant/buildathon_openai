@@ -45,16 +45,21 @@ enabled = true
 
 [functions.verify-identity]
 verify_jwt = true
+import_map = "./functions/deno.json"
 
 [functions.analyze-report]
 verify_jwt = true
+import_map = "./functions/deno.json"
 
 [functions.create-realtime-session]
 verify_jwt = true
+import_map = "./functions/deno.json"
 
 [functions.agent-tools]
 verify_jwt = true
+import_map = "./functions/deno.json"
 
 # proximity-dispatcher is also invoked by a DB trigger/webhook, not only a user JWT.
 [functions.proximity-dispatcher]
 verify_jwt = false
+import_map = "./functions/deno.json"

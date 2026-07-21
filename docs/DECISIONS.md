@@ -206,3 +206,19 @@ behind the 4-tab bottom bar (Mapa · Reportar · Cerca · Perfil).
 on the demo devices; the safety layer ([ADR-017](#adr-017--whatsapp-emergency-alerts-messaginggateway-port--hermes-adapter--proximity-dispatcher))
 has a single home. The screen degrades gracefully — skip WhatsApp and the core four pillars
 are untouched.
+
+## ADR-020 — Reports are anonymous to users; identity remains an abuse gate
+**Context:** Showing a reporter's display name can suppress legitimate reports through fear
+of retaliation. Fully unlinking reports would remove the ability to stop repeat abuse.
+**Decision:** No reporter identity crosses the public incident-detail contract; users see only
+the `Reporte verificado ✓` badge derived from `profiles.verified`. Internally,
+`incidents.reporter_id` remains for moderation. Setting `profiles.disabled_at` blocks new
+incidents and confirmations through RLS and the privileged voting RPC. Profiles are disabled,
+never deleted, so the unique `cedula_hash` remains a tombstone that prevents re-registration.
+The raw cédula remains neither stored nor logged. Signup and reporting disclose that reports
+are anonymous to other users while verified identity is retained to prevent abuse.
+**Consequences:** The visible retaliation vector is removed while manual moderation remains
+possible. For the MVP, authenticated users can still observe the reporter UUID through direct
+incident reads or Realtime payloads, but profiles RLS prevents resolving it to a name. Column
+revocation would break `postgres_changes`; a later hardening path is database broadcast plus
+revoked direct access.

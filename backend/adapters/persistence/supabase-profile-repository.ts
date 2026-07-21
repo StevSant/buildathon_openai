@@ -25,9 +25,56 @@ export class SupabaseProfileRepository implements ProfileRepository {
   }): Promise<Profile> {
     const cedulaHash = await hashCedula(input.cedula, this.config.cedulaHashPepper);
 
+    const { data: existing, error: lookupError } = await this.client
+      .from('profiles')
+      .select('cedula_hash')
+      .eq('id', input.userId)
+      .maybeSingle();
+    if (lookupError) throw new Error(lookupError.message);
+
+    if (existing?.cedula_hash && existing.cedula_hash !== cedulaHash) {
+      throw new Error('cedula_already_bound');
+    }
+
+    if (existing?.cedula_hash === cedulaHash) {
+      const { data, error } = await this.client
+        .from('profiles')
+        .update({ verified: true, verification_method: input.method })
+        .eq('id', input.userId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return this.toProfile(data as Record<string, any>);
+    }
+
+    if (existing) {
+      const { data, error } = await this.client
+        .from('profiles')
+        .update({
+          cedula_hash: cedulaHash,
+          verified: true,
+          verification_method: input.method,
+        })
+        .eq('id', input.userId)
+        .is('cedula_hash', null)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        if (error.code === '23505' || /duplicate key|cedula_hash/i.test(error.message)) {
+          throw new Error('cedula_taken');
+        }
+        throw new Error(error.message);
+      }
+      if (data) return this.toProfile(data as Record<string, any>);
+
+      // A concurrent verification bound this profile after our lookup. Never overwrite it.
+      throw new Error('cedula_already_bound');
+    }
+
     const { data, error } = await this.client
       .from('profiles')
-      .upsert({
+      .insert({
         id: input.userId,
         cedula_hash: cedulaHash,
         verified: true,
@@ -35,7 +82,30 @@ export class SupabaseProfileRepository implements ProfileRepository {
       })
       .select()
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (error.code === '23505' || /duplicate key|cedula_hash/i.test(error.message)) {
+        const { data: concurrentProfile, error: concurrentLookupError } = await this.client
+          .from('profiles')
+          .select('cedula_hash')
+          .eq('id', input.userId)
+          .maybeSingle();
+        if (concurrentLookupError) throw new Error(concurrentLookupError.message);
+        if (!concurrentProfile) throw new Error('cedula_taken');
+        if (concurrentProfile.cedula_hash !== cedulaHash) {
+          throw new Error('cedula_already_bound');
+        }
+
+        const { data: verifiedProfile, error: verifyError } = await this.client
+          .from('profiles')
+          .update({ verified: true, verification_method: input.method })
+          .eq('id', input.userId)
+          .select()
+          .single();
+        if (verifyError) throw new Error(verifyError.message);
+        return this.toProfile(verifiedProfile as Record<string, any>);
+      }
+      throw new Error(error.message);
+    }
 
     return this.toProfile(data as Record<string, any>);
   }

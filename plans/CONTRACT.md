@@ -42,7 +42,8 @@ type NearbyIncident = {
   confirmations: number; created_at: string; lng: number; lat: number
 }
 // One incident's public view: everything in NearbyIncident except distance_meters
-// (a single-incident lookup has no user origin to measure from), plus a verification badge.
+// (a single-incident lookup has no user origin to measure from), plus reporter_verified.
+// Anonymous by design (ADR-020): no reporter identity ever crosses this seam.
 type IncidentDetails = Omit<NearbyIncident, 'distance_meters'> & {
   reporter_verified: boolean
 }
@@ -64,7 +65,7 @@ lane owns the tables, RLS policies, and RPC bodies.
 | RPC | Args | Returns |
 |---|---|---|
 | `get_nearby_incidents` | `user_lat` float, `user_long` float, `radius_meters` int (default 3000), `filter_category` text\|null | rows of `NearbyIncident` (≤20, ordered by distance) |
-| `get_incident_details` | `target_id` uuid | one anonymous `IncidentDetails` (verification badge only; no reporter name or cédula) |
+| `get_incident_details` | `target_id` uuid | one `IncidentDetails` (anonymous: no reporter identity, only `reporter_verified` — ADR-020) |
 | `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }`; authenticated-only restricted privileged RPC |
 
 ### 3.3 Table writes (RLS-guarded — client writes only its own rows)

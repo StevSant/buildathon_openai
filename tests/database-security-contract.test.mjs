@@ -34,11 +34,11 @@ test("restricts privileged community voting to authenticated callers", () => {
   assert.match(init, /if uid is null then raise exception 'not authenticated'/);
   assert.match(
     init,
-    /revoke all on function public\.confirm_incident\(uuid, text, integer, integer\) from public, anon/,
+    /revoke all on function public\.confirm_incident\(uuid, text\) from public, anon/,
   );
   assert.match(
     init,
-    /grant execute on function public\.confirm_incident\(uuid, text, integer, integer\) to authenticated/,
+    /grant execute on function public\.confirm_incident\(uuid, text\) to authenticated/,
   );
 });
 

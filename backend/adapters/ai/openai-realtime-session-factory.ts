@@ -15,6 +15,7 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
       voice: string;
       personas: Record<string, RealtimePersona>;
       apiBaseUrl?: string;
+      transcriptionModel?: string;
     },
   ) {}
 
@@ -28,6 +29,20 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
       throw new Error(`Unknown persona: ${input.personaId}`);
     }
 
+    const lat = input.context?.lat;
+    const lng = input.context?.lng;
+    const locationHint =
+      typeof lat === 'number' &&
+      Number.isFinite(lat) &&
+      typeof lng === 'number' &&
+      Number.isFinite(lng)
+        ? '\nContexto aproximado de ubicación: latitud ' +
+          lat +
+          ', longitud ' +
+          lng +
+          '. Úsalo solo para orientar la conversación; las herramientas reciben la ubicación real.'
+        : '';
+
     const baseUrl = this.config.apiBaseUrl ?? OPENAI_DEFAULT_BASE_URL;
     const response = await fetch(`${baseUrl}/realtime/client_secrets`, {
       method: 'POST',
@@ -39,11 +54,16 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
         session: {
           type: 'realtime',
           model: this.config.model,
-          audio: { output: { voice: this.config.voice } },
-          instructions: persona.instructions,
+          audio: {
+            output: { voice: this.config.voice },
+            // Without this the API never emits input_audio_transcription events, so the
+            // client would have no user-side transcript.
+            ...(this.config.transcriptionModel
+              ? { input: { transcription: { model: this.config.transcriptionModel } } }
+              : {}),
+          },
+          instructions: persona.instructions + locationHint,
           tools: persona.tools ?? [],
-          // Dynamic context (e.g. approximate location) as non-authoritative hints.
-          ...(input.context ? { metadata: input.context } : {}),
         },
       }),
     });
@@ -52,7 +72,8 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
       throw new Error(`Realtime session mint failed: ${response.status}`);
     }
 
-    // TODO: align with the exact /v1/realtime/client_secrets response shape.
+    // POST /v1/realtime/client_secrets returns { value, expires_at, session }. Older/newer
+    // shapes may nest it under client_secret — read both defensively.
     const data = (await response.json()) as {
       value?: string;
       expires_at?: number;
@@ -60,6 +81,9 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
     };
     const clientSecret = data.client_secret?.value ?? data.value ?? '';
     const expiresAtEpoch = data.client_secret?.expires_at ?? data.expires_at;
+    if (!clientSecret) {
+      throw new Error('Realtime mint returned no client secret');
+    }
     const expiresAt = expiresAtEpoch ? new Date(expiresAtEpoch * 1000).toISOString() : '';
 
     return { clientSecret, expiresAt };

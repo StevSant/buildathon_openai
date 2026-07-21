@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "@pulso/core": "./_pkg/core.mjs",
+    "@pulso/adapters": "./_pkg/adapters.mjs",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "openai": "npm:openai@4"
+  }
+}

@@ -8,7 +8,7 @@ import { supabase } from "./supabase";
 //   - "toast"  → a discreet toast (relevant, but not urgent)
 // Thresholds come from config (env), never hardcoded.
 export type AlertTier = "sheet" | "toast";
-type NotificationSurface = "center" | "host";
+type NotificationSurface = "host" | "center";
 
 export function decideAlertTier(params: {
   severity: number;
@@ -25,7 +25,7 @@ export function subscribeToNotificationIncidents(
   surface: NotificationSurface,
   onChange: () => void,
 ): RealtimeChannel {
-  const channelName = `incidents-notifications-${surface}-${crypto.randomUUID()}`;
+  const channelName = `incidents-notification-${surface}-${crypto.randomUUID()}`;
 
   return supabase
     .channel(channelName)

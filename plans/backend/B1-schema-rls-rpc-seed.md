@@ -1,5 +1,9 @@
 # B1 — Schema, RLS, RPC & Seed Verification Gate
 
+> ⚠️ **Amended by B6/F7 (2026-07-21, ADR-020):** `IncidentDetails` no longer carries
+> `reporter_name` — reports are anonymous to users. Where this plan shows `reporter_name`,
+> read `reporter_verified` only.
+
 > **Status (2026-07-21): IMPLEMENTED — verification only.** Do not execute the archived edit or
 > commit steps below. The source now includes coordinates, the dispatch log, the service-role
 > matcher, explicit table/function privileges, and a narrowly restricted `SECURITY DEFINER`

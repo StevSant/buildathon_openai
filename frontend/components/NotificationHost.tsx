@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { NearbyIncident } from "@pulso/core";
+import type { Category, NearbyIncident } from "@pulso/core";
 import {
   config,
   decideAlertTier,
   getNearbyIncidents,
+  supabase,
   subscribeToNotificationIncidents,
 } from "@/lib";
 import NotificationBottomSheet from "./NotificationBottomSheet";
@@ -15,6 +16,7 @@ import NotificationToast from "./NotificationToast";
 type ToastIncident = {
   id: string;
   title: string;
+  category: Category;
 };
 
 function formatIncidentAge(createdAt: string): string {
@@ -49,7 +51,7 @@ export default function NotificationHost() {
       return;
     }
 
-    setToast({ id: incident.id, title: incident.title });
+    setToast({ id: incident.id, title: incident.title, category: incident.category });
   }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -77,12 +79,15 @@ export default function NotificationHost() {
   }, [showIncident]);
 
   useEffect(() => {
-    const channel = subscribeToNotificationIncidents("host", () => void refresh());
+    const channel = subscribeToNotificationIncidents(
+      "host",
+      () => void refresh(),
+    );
 
     if (!navigator.geolocation) {
       void refresh();
       return () => {
-        void channel.unsubscribe();
+        void supabase.removeChannel(channel);
       };
     }
 
@@ -98,7 +103,7 @@ export default function NotificationHost() {
     );
 
     return () => {
-      void channel.unsubscribe();
+      void supabase.removeChannel(channel);
     };
   }, [refresh]);
 
@@ -107,6 +112,7 @@ export default function NotificationHost() {
       {toast && (
         <NotificationToast
           title={toast.title}
+          category={toast.category}
           onDismiss={() => setToast(null)}
           onOpen={() => {
             setToast(null);
@@ -117,8 +123,10 @@ export default function NotificationHost() {
       {sheet && (
         <NotificationBottomSheet
           title={sheet.title}
+          category={sheet.category}
           distanceMeters={sheet.distance_meters}
           ageLabel={formatIncidentAge(sheet.created_at)}
+          verified={sheet.status === "confirmed"}
           onViewOnMap={() => {
             setSheet(null);
             router.push("/");

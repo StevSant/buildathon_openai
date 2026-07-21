@@ -1,4 +1,6 @@
 // Barrel for UI components. Screens import from "@/components", never from deep files.
+export { default as Icon } from "./Icon";
+export { default as IconSprite } from "./IconSprite";
 export { default as TabBar } from "./TabBar";
 export { default as AuthForm } from "./AuthForm";
 export { default as AuthGuard } from "./AuthGuard";

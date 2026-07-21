@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { VerificationMethod } from "@pulso/core";
 import { config, supabase } from "@/lib";
+import Icon from "./Icon";
 
 type Mode = "signup" | "signin";
 
@@ -27,6 +28,7 @@ export default function AuthForm() {
   const [password, setPassword] = useState("");
   const [cedula, setCedula] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,109 +128,131 @@ export default function AuthForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-1 flex-col px-5 pb-5 pt-4">
-      <h1 className="m-0 text-[25px] font-extrabold leading-tight tracking-[-0.03em] text-ink">
-        {mode === "signup" ? "Crea tu cuenta" : "Inicia sesión"}
-      </h1>
-      <p className="mb-5 mt-2 max-w-[285px] text-[13px] leading-5 text-muted">
-        Cada reporte lleva una identidad real. Sin cuentas falsas.
+    <form
+      onSubmit={onSubmit}
+      className="s-auth"
+      style={{ paddingTop: "max(env(safe-area-inset-top), 20px)" }}
+    >
+      <span className="applogo" style={{ width: 44, height: 44 }}>
+        <svg viewBox="0 0 512 512">
+          <use href="#logo" />
+        </svg>
+      </span>
+
+      <h2>{mode === "signup" ? "Crea tu cuenta" : "Bienvenido de nuevo"}</h2>
+      <p className="sub">
+        {mode === "signup"
+          ? "Cada reporte lleva una identidad real. Sin cuentas falsas."
+          : "Ingresa con tu correo y contraseña."}
       </p>
 
-      <div className="flex flex-col gap-3">
-        {mode === "signup" && (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
-              Nombre a mostrar
-            </span>
+      {mode === "signup" && (
+        <div className="field">
+          <label htmlFor="auth-name">Nombre a mostrar</label>
+          <div className="input">
             <input
+              id="auth-name"
               autoComplete="name"
-              className="h-[52px] rounded-xl border border-line bg-panel px-3.5 text-[15px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent"
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
               placeholder="María Torres"
             />
-          </label>
-        )}
+          </div>
+        </div>
+      )}
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
-            Correo
-          </span>
+      <div className="field">
+        <label htmlFor="auth-email">Correo</label>
+        <div className="input">
           <input
+            id="auth-email"
             autoComplete="email"
             type="email"
             required
-            className="h-[52px] rounded-xl border border-line bg-panel px-3.5 text-[15px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="maria.torres@correo.ec"
           />
-        </label>
+        </div>
+      </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
-            Contraseña
-          </span>
+      <div className="field">
+        <label htmlFor="auth-password">Contraseña</label>
+        <div className="input">
           <input
+            id="auth-password"
             autoComplete={mode === "signup" ? "new-password" : "current-password"}
-            type="password"
+            type={isPasswordVisible ? "text" : "password"}
             required
             minLength={6}
-            className="h-[52px] rounded-xl border border-line bg-panel px-3.5 text-[15px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="••••••••••"
           />
-        </label>
-
-        {mode === "signup" && (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
-              Cédula
-            </span>
-            <span className="relative">
-              <input
-                autoComplete="off"
-                inputMode="numeric"
-                required
-                maxLength={10}
-                className={`h-[52px] w-full rounded-xl border bg-panel px-3.5 pr-11 font-mono text-[15px] tracking-[0.14em] text-ink outline-none transition-colors placeholder:tracking-normal placeholder:text-faint focus:border-accent ${
-                  hasValidCedulaShape ? "border-ok" : "border-line"
-                }`}
-                value={cedula}
-                onChange={(event) => setCedula(event.target.value.replace(/\D/g, ""))}
-                placeholder="0102030405"
-              />
-              {hasValidCedulaShape && (
-                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-lg text-ok">
-                  ✓
-                </span>
-              )}
-            </span>
-          </label>
-        )}
+          <button
+            type="button"
+            aria-label={isPasswordVisible ? "Ocultar contraseña" : "Mostrar contraseña"}
+            aria-pressed={isPasswordVisible}
+            onClick={() => setIsPasswordVisible((visible) => !visible)}
+            style={{
+              display: "inline-flex",
+              padding: 0,
+              border: 0,
+              background: "none",
+              cursor: "pointer",
+            }}
+          >
+            <Icon name="ic-eye" />
+          </button>
+        </div>
       </div>
 
+      {mode === "signup" && (
+        <div className="field">
+          <label htmlFor="auth-cedula">Cédula</label>
+          <div className={`input mono${hasValidCedulaShape ? " ok" : ""}`}>
+            <input
+              id="auth-cedula"
+              autoComplete="off"
+              inputMode="numeric"
+              required
+              maxLength={10}
+              value={cedula}
+              onChange={(event) => setCedula(event.target.value.replace(/\D/g, ""))}
+              placeholder="0102030405"
+            />
+            {hasValidCedulaShape && (
+              <span className="badge-ok">
+                <Icon name="ic-check" style={{ width: 15, height: 15, strokeWidth: 2.3 }} />
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {mode === "signup" && hasValidCedulaShape && (
+        <div className="verify-note">
+          <Icon name="ic-check" />
+          Identidad verificada · método: algorítmico
+        </div>
+      )}
+
       {error && (
-        <p aria-live="polite" className="mb-0 mt-3 text-[12px] leading-5 text-sev-fire">
+        <p aria-live="polite" className="m-0 text-[12px] leading-[17px] text-sev-fire">
           {error}
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={busy}
-        className="mt-5 flex h-[52px] w-full items-center justify-center rounded-[14px] bg-accent px-3 text-[14px] font-extrabold text-accent-ink shadow-[0_8px_24px_-8px_var(--accent)] transition-opacity disabled:cursor-wait disabled:opacity-60"
-      >
-        {busy ? "Un momento…" : mode === "signup" ? "Crear cuenta verificada" : "Entrar"}
+      <button type="submit" className="btn primary" disabled={busy}>
+        {busy ? "Un momento…" : mode === "signup" ? "Crear cuenta verificada" : "Ingresar"}
       </button>
 
       {mode === "signup" && (
-        <p className="mb-0 mt-3 flex items-start gap-2 text-[11.5px] leading-[17px] text-faint">
-          <span aria-hidden="true" className="mt-px text-[13px] text-muted">
-            ⊙
-          </span>
-          Tu cédula nunca se guarda: solo un hash. No se comparte ni se muestra a nadie.
+        <p className="privacy">
+          <Icon name="ic-shield" />
+          Tu cédula nunca se guarda: solo un hash. No se comparte ni se muestra a nadie. Tus
+          reportes son anónimos para otros usuarios; si una cuenta publica reportes falsos, se
+          deshabilita y esa cédula no puede volver a registrarse.
         </p>
       )}
 
@@ -236,9 +260,10 @@ export default function AuthForm() {
         type="button"
         onClick={() => {
           setMode(mode === "signup" ? "signin" : "signup");
+          setIsPasswordVisible(false);
           setError(null);
         }}
-        className="mt-auto pt-5 text-center text-[12px] font-semibold text-accent"
+        className="mt-auto pt-4 text-center text-[12px] font-semibold text-accent"
       >
         {mode === "signup" ? "¿Ya tienes cuenta? Inicia sesión" : "¿Sin cuenta? Regístrate"}
       </button>

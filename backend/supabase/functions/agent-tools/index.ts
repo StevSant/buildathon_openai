@@ -1,5 +1,6 @@
 import { SupabaseIncidentRepository } from "@pulso/adapters";
 import {
+  CATEGORY_VALUES,
   makeGetNearbyIncidents,
   makeGetIncidentDetails,
   makeConfirmIncident,
@@ -17,38 +18,96 @@ Deno.serve(async (req) => {
   try {
     const env = getEnv();
     const userId = await userFromJwt(req);
-    // Env-injected bounds: MAX_RADIUS_METERS caps whatever radius the model asks for,
-    // and the confirm/dispute thresholds ride along to the confirm_incident RPC.
+    // MAX_RADIUS_METERS caps whatever radius the model asks for. Confirmation thresholds
+    // stay inside Postgres; the frozen confirm_incident RPC accepts only target_id + kind.
     const incidents = new SupabaseIncidentRepository(createUserClient(req), {
       maxRadiusMeters: env.maxRadiusMeters,
-      confirmThreshold: env.confirmThreshold,
-      disputeThreshold: env.disputeThreshold,
     });
-    const { tool, arguments: args = {} } = await req.json();
+    const body: unknown = await req.json();
+    const requestBody =
+      typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    const tool = requestBody.tool;
+    const args =
+      typeof requestBody.arguments === "object" && requestBody.arguments !== null
+        ? (requestBody.arguments as Record<string, unknown>)
+        : {};
 
     let result: unknown;
     switch (tool) {
       case "get_nearby_incidents": {
+        if (
+          typeof args.user_lat !== "number" ||
+          !Number.isFinite(args.user_lat) ||
+          typeof args.user_long !== "number" ||
+          !Number.isFinite(args.user_long)
+        ) {
+          return Response.json(
+            { error: "user_lat/user_long requeridos" },
+            { status: 400, headers: corsHeaders },
+          );
+        }
+        if (
+          args.radius_meters !== undefined &&
+          (typeof args.radius_meters !== "number" ||
+            !Number.isFinite(args.radius_meters) ||
+            args.radius_meters <= 0)
+        ) {
+          return Response.json(
+            { error: "radius_meters inválido" },
+            { status: 400, headers: corsHeaders },
+          );
+        }
+        const category =
+          args.filter_category === undefined || args.filter_category === null
+            ? null
+            : CATEGORY_VALUES.find((value) => value === args.filter_category);
+        if (args.filter_category != null && !category) {
+          return Response.json(
+            { error: "filter_category inválido" },
+            { status: 400, headers: corsHeaders },
+          );
+        }
         const run = makeGetNearbyIncidents({ incidents });
         result = await run({
           lat: args.user_lat,
           long: args.user_long,
-          radiusMeters: args.radius_meters ?? env.defaultRadiusMeters,
-          category: args.filter_category ?? null,
+          radiusMeters:
+            typeof args.radius_meters === "number"
+              ? args.radius_meters
+              : env.defaultRadiusMeters,
+          category,
         });
         break;
       }
       case "get_incident_details": {
+        if (typeof args.incident_id !== "string" || !args.incident_id) {
+          return Response.json(
+            { error: "incident_id requerido" },
+            { status: 400, headers: corsHeaders },
+          );
+        }
         const run = makeGetIncidentDetails({ incidents });
         result = await run({ incidentId: args.incident_id });
         break;
       }
       case "confirm_incident": {
+        if (typeof args.incident_id !== "string" || !args.incident_id) {
+          return Response.json(
+            { error: "incident_id requerido" },
+            { status: 400, headers: corsHeaders },
+          );
+        }
+        if (args.kind !== "confirm" && args.kind !== "dispute") {
+          return Response.json(
+            { error: "kind inválido" },
+            { status: 400, headers: corsHeaders },
+          );
+        }
         const run = makeConfirmIncident({ incidents });
         result = await run({
           userId,
           incidentId: args.incident_id,
-          kind: args.kind === "dispute" ? "dispute" : "confirm",
+          kind: args.kind,
         });
         break;
       }
