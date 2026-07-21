@@ -11,6 +11,7 @@ export {
   subscribeToIncidents,
 } from "./incidents";
 export { haversineMeters } from "./distance";
+export { addIncidentComment, getIncidentComments } from "./incident-comments";
 export { REALTIME_TOOLS } from "./realtime-tools";
 export { TOOL_CALL_LABELS } from "./tool-call-labels";
 export { compressImage } from "./compress-image";
