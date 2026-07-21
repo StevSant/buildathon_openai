@@ -7,6 +7,8 @@ export { default as AuthGuard } from "./AuthGuard";
 export { default as IncidentMap } from "./IncidentMap";
 export { default as ReportForm } from "./ReportForm";
 export { default as RealtimeAssistant } from "./RealtimeAssistant";
+export { default as AssistantIncidentCards } from "./AssistantIncidentCards";
+export { default as AssistantIncidentDetailCard } from "./AssistantIncidentDetailCard";
 export { default as IncidentDetailSheet } from "./IncidentDetailSheet";
 export { default as NotificationBell } from "./NotificationBell";
 export { default as NotificationToast } from "./NotificationToast";

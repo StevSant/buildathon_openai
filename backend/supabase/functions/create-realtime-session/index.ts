@@ -30,6 +30,7 @@ Deno.serve(async (req) => {
       personas: PERSONAS,
       apiBaseUrl: env.openaiBaseUrl,
       transcriptionModel: env.openaiTranscribeModel,
+      transcriptionLanguage: env.defaultLanguage,
     });
 
     const createAgentSession = makeCreateAgentSession({ sessions });

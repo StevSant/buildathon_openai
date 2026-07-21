@@ -16,6 +16,9 @@ export type { AlertContact } from './alert-contact';
 export type { AlertRecipient } from './alert-recipient';
 
 export { CATEGORY_VALUES } from './category-values';
+export { CATEGORY_LABELS } from './category-labels';
+export { INCIDENT_STATUS_LABELS } from './incident-status-labels';
+export { SEVERITY_LABELS } from './severity-labels';
 export { validateCedula } from './validate-cedula';
 export { clampSeverity } from './clamp-severity';
 export { nextIncidentStatus } from './next-incident-status';

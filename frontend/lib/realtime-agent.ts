@@ -1,3 +1,4 @@
+import { decorateAgentToolResult } from "./agent-speech";
 import { config } from "./config";
 import { supabase } from "./supabase";
 
@@ -15,10 +16,16 @@ export interface AssistantCallbacks {
   onUserTranscript?: (text: string) => void;
   onAgentTranscript?: (text: string) => void;
   onToolCall?: (toolName: string) => void;
+  /** Fires with the raw tool result so the UI can render rich cards, not just text. */
+  onToolResult?: (toolName: string, result: unknown) => void;
+  /** Fires when the Realtime session reports an error event over the data channel. */
+  onError?: (message: string) => void;
 }
 
 export interface AssistantHandle {
   stop: () => void;
+  /** Send a typed question into the live conversation (queued until the channel opens). */
+  sendText: (text: string) => void;
 }
 
 async function accessToken(): Promise<string> {
@@ -70,6 +77,7 @@ async function runTool(
   return res.json();
 }
 
+
 export async function startRealtimeSession(
   personaId: string,
   location: { lat: number; long: number },
@@ -92,6 +100,36 @@ export async function startRealtimeSession(
 
   const dc = pc.createDataChannel("oai-events");
 
+  // Typed questions (suggestion chips) are serialized: the Realtime API allows only one
+  // active response per conversation, so a question queues while a response is generating
+  // (or a tool call is being bridged) and flushes one at a time on response.done. Questions
+  // tapped before the channel opens also wait here, so a chip can start the session and
+  // ask in one gesture.
+  const pendingTexts: string[] = [];
+  let responseActive = false;
+  let toolCallsInFlight = 0;
+
+  function sendUserText(text: string) {
+    responseActive = true;
+    dc.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text }],
+        },
+      }),
+    );
+    dc.send(JSON.stringify({ type: "response.create" }));
+  }
+
+  function flushPendingText() {
+    if (responseActive || toolCallsInFlight > 0 || dc.readyState !== "open") return;
+    const next = pendingTexts.shift();
+    if (next !== undefined) sendUserText(next);
+  }
+
   dc.onopen = () => {
     callbacks.onStatus?.("listening");
     // Inject location as a context message (NOT session.update, which would overwrite the
@@ -111,6 +149,7 @@ export async function startRealtimeSession(
         },
       }),
     );
+    flushPendingText();
   };
 
   dc.onmessage = async (event) => {
@@ -155,7 +194,8 @@ export async function startRealtimeSession(
       const args = msg.arguments ? JSON.parse(msg.arguments) : {};
       let output: unknown;
       try {
-        output = await runTool(msg.name, args, location);
+        output = withReportedAge(msg.name, await runTool(msg.name, args, location));
+        callbacks.onToolResult?.(msg.name, output);
       } catch (err) {
         output = { error: String(err) };
       }
@@ -192,6 +232,10 @@ export async function startRealtimeSession(
   await pc.setRemoteDescription({ type: "answer", sdp: await sdpRes.text() });
 
   return {
+    sendText: (text: string) => {
+      if (dc.readyState === "open") sendUserText(text);
+      else pendingTexts.push(text);
+    },
     stop: () => {
       mic.getTracks().forEach((track) => track.stop());
       dc.close();

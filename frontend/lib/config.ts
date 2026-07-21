@@ -52,6 +52,9 @@ export const config = {
   // is at least this severe AND closer than this radius. Otherwise it is a discreet toast.
   alertMinSeverity: num(process.env.NEXT_PUBLIC_ALERT_SEVERITY_MIN, 4),
   alertRadiusMeters: num(process.env.NEXT_PUBLIC_ALERT_RADIUS_METERS, 500),
+  // Report-photo client-side re-encode bounds (longest side in px, JPEG quality 0-1).
+  photoMaxDimension: num(process.env.NEXT_PUBLIC_PHOTO_MAX_DIMENSION, 1600),
+  photoJpegQuality: num(process.env.NEXT_PUBLIC_PHOTO_JPEG_QUALITY, 0.85),
 } as const;
 
 export type AppConfig = typeof config;

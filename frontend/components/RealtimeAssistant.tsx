@@ -1,18 +1,34 @@
 "use client";
 
 import { useRef, useState } from "react";
+import type { IncidentDetails, NearbyIncident } from "@pulso/core";
 import {
   startRealtimeSession,
+  TOOL_CALL_LABELS,
   type AssistantHandle,
   type AssistantStatus,
 } from "@/lib";
+import AssistantIncidentCards from "./AssistantIncidentCards";
+import AssistantIncidentDetailCard from "./AssistantIncidentDetailCard";
 
 // Voice agent "Cerca". Establishes the WebRTC session and surfaces a live conversation
-// while the agent queries real incident data through the browser tool bridge.
-interface Turn {
-  role: "user" | "agent" | "tool";
-  text: string;
-}
+// while the agent queries real incident data through the browser tool bridge. Tool
+// results also render as rich cards (photos, distances, confirmations) below the audio
+// transcript, so the user sees the evidence behind what Cerca says.
+type Turn =
+  | { kind: "text"; role: "user" | "agent" | "tool"; text: string }
+  | { kind: "incidents"; incidents: NearbyIncident[] }
+  | { kind: "detail"; details: IncidentDetails };
+
+// Aligned with the agent tools: nearby query, severity focus, category filters, and the
+// trust question that makes Cerca cite its community sources.
+const SUGGESTED_QUESTIONS = [
+  "¿Qué pasa cerca de mí?",
+  "¿Hay algo grave ahora?",
+  "¿Inundaciones en mi zona?",
+  "¿Cómo están las vías?",
+  "¿Cómo sé que es real?",
+];
 
 export default function RealtimeAssistant({
   personaId = "cerca",
@@ -27,7 +43,7 @@ export default function RealtimeAssistant({
     setTurns((previousTurns) => [...previousTurns, turn]);
   }
 
-  async function start() {
+  async function start(): Promise<AssistantHandle | null> {
     setStatus("connecting");
     try {
       const position = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -40,13 +56,28 @@ export default function RealtimeAssistant({
         { lat: position.coords.latitude, long: position.coords.longitude },
         {
           onStatus: setStatus,
-          onUserTranscript: (text) => addTurn({ role: "user", text }),
-          onAgentTranscript: (text) => addTurn({ role: "agent", text }),
-          onToolCall: (name) => addTurn({ role: "tool", text: `→ ${name}` }),
+          onUserTranscript: (text) => addTurn({ kind: "text", role: "user", text }),
+          onAgentTranscript: (text) => addTurn({ kind: "text", role: "agent", text }),
+          onToolCall: (name) => addTurn({ kind: "text", role: "tool", text: `→ ${name}` }),
+          onToolResult: (name, result) => {
+            if (name === "get_nearby_incidents" && Array.isArray(result) && result.length > 0) {
+              addTurn({ kind: "incidents", incidents: result as NearbyIncident[] });
+            }
+            if (
+              name === "get_incident_details" &&
+              typeof result === "object" &&
+              result !== null &&
+              "id" in result
+            ) {
+              addTurn({ kind: "detail", details: result as IncidentDetails });
+            }
+          },
         },
       );
+      return handle.current;
     } catch {
       setStatus("error");
+      return null;
     }
   }
 
@@ -54,6 +85,14 @@ export default function RealtimeAssistant({
     handle.current?.stop();
     handle.current = null;
     setStatus("idle");
+  }
+
+  // Tapping a chip works in any state: it starts the session first when needed (the
+  // bridge queues the question until the data channel opens) and asks right away.
+  async function ask(question: string) {
+    addTurn({ kind: "text", role: "user", text: question });
+    const current = handle.current ?? (await start());
+    current?.sendText(question);
   }
 
   // A live session is either dialing in or streaming; the badge only reads "EN VIVO"
@@ -111,9 +150,28 @@ export default function RealtimeAssistant({
         />
       </div>
 
+      <div className="suggs" aria-label="Preguntas sugeridas">
+        {SUGGESTED_QUESTIONS.map((question) => (
+          <button
+            key={question}
+            type="button"
+            disabled={status === "connecting"}
+            onClick={() => void ask(question)}
+          >
+            {question}
+          </button>
+        ))}
+      </div>
+
       <div className="convo">
-        {turns.map((turn, index) =>
-          turn.role === "tool" ? (
+        {turns.map((turn, index) => {
+          if (turn.kind === "incidents") {
+            return <AssistantIncidentCards key={index} incidents={turn.incidents} />;
+          }
+          if (turn.kind === "detail") {
+            return <AssistantIncidentDetailCard key={index} details={turn.details} />;
+          }
+          return turn.role === "tool" ? (
             <div key={index} className="toolcall">
               {turn.text}
             </div>
@@ -124,8 +182,8 @@ export default function RealtimeAssistant({
             >
               {turn.text}
             </div>
-          ),
-        )}
+          );
+        })}
       </div>
 
       <div className="listening">

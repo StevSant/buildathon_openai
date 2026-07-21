@@ -16,6 +16,7 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
       personas: Record<string, RealtimePersona>;
       apiBaseUrl?: string;
       transcriptionModel?: string;
+      transcriptionLanguage?: string;
     },
   ) {}
 
@@ -57,9 +58,19 @@ export class OpenAIRealtimeSessionFactory implements AgentSessionFactory {
           audio: {
             output: { voice: this.config.voice },
             // Without this the API never emits input_audio_transcription events, so the
-            // client would have no user-side transcript.
+            // client would have no user-side transcript. Pinning the language stops the
+            // transcriber from mis-detecting ambient speech as other languages.
             ...(this.config.transcriptionModel
-              ? { input: { transcription: { model: this.config.transcriptionModel } } }
+              ? {
+                  input: {
+                    transcription: {
+                      model: this.config.transcriptionModel,
+                      ...(this.config.transcriptionLanguage
+                        ? { language: this.config.transcriptionLanguage }
+                        : {}),
+                    },
+                  },
+                }
               : {}),
           },
           instructions: persona.instructions + locationHint,

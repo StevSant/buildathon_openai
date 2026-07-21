@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORY_VALUES, clampSeverity } from "@pulso/core";
 import type { Category, Severity } from "@pulso/core";
-import { config, supabase } from "@/lib";
+import { compressImage, config, supabase } from "@/lib";
 import Icon from "./Icon";
 
 // Report flow: capture/upload a photo, request structured suggestions from analyze-report,
@@ -71,11 +71,15 @@ export default function ReportForm() {
       const uid = userData.user?.id;
       if (!uid) throw new Error("Sin sesión");
 
+      // Re-encode to a bounded JPEG (handles HEIC/huge camera files) so the stored object
+      // always matches its .jpg path and OpenAI vision can read it.
+      const photo = await compressImage(file);
+
       // The bucket path is deliberately relative: <auth.uid()>/<uuid>.jpg.
       const path = `${uid}/${crypto.randomUUID()}.jpg`;
       const { error: uploadError } = await supabase.storage
         .from("report-photos")
-        .upload(path, file, { contentType: file.type });
+        .upload(path, photo, { contentType: "image/jpeg" });
       if (uploadError) throw uploadError;
 
       const { data: sessionData } = await supabase.auth.getSession();
