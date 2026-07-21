@@ -17,3 +17,4 @@ export { default as SosButton } from "./SosButton";
 export { default as EmergencyContactsForm } from "./EmergencyContactsForm";
 export { default as AlertRulesForm } from "./AlertRulesForm";
 export { default as WhatsAppConfigForm } from "./WhatsAppConfigForm";
+export { default as PresentationDeck } from "./PresentationDeck";

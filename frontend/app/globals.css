@@ -380,6 +380,16 @@ body {
 @keyframes ping { 0% { transform: rotate(-45deg) scale(0.6); opacity: 0.9; } 100% { transform: rotate(-45deg) scale(2.4); opacity: 0; } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+/* Standalone presentations route: abstract urban motion, intentionally separate from product UI. */
+.presentation-visual { position: absolute; inset: 0; }
+.presentation-visual::before, .presentation-visual::after { content: ""; position: absolute; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--slide-accent) 65%, transparent); }
+.presentation-visual--signal::before { width: 220px; height: 220px; right: 12%; top: 50%; transform: translateY(-50%); box-shadow: 0 0 0 28px color-mix(in srgb, var(--slide-accent) 8%, transparent), 0 0 0 58px color-mix(in srgb, var(--slide-accent) 5%, transparent); }
+.presentation-visual--signal::after { width: 13px; height: 13px; right: calc(12% + 103px); top: calc(50% - 6px); background: var(--slide-accent); box-shadow: 0 0 24px var(--slide-accent); }
+.presentation-visual--waves::before { width: 130%; height: 200%; left: -15%; top: 38%; border-width: 28px 0 0; transform: rotate(-10deg); box-shadow: 0 -42px 0 -25px color-mix(in srgb, var(--slide-accent) 65%, transparent), 0 -84px 0 -55px color-mix(in srgb, var(--slide-accent) 50%, transparent); }
+.presentation-visual--waves::after { width: 75px; height: 75px; right: 17%; top: 23%; background: color-mix(in srgb, var(--slide-accent) 18%, transparent); box-shadow: 0 0 48px var(--slide-accent); }
+.presentation-visual--orbit::before { width: 260px; height: 92px; right: 8%; top: 26%; transform: rotate(-22deg); }
+.presentation-visual--orbit::after { width: 86px; height: 86px; right: 33%; top: 37%; background: var(--slide-accent); border: 0; box-shadow: 116px -60px 0 -27px color-mix(in srgb, var(--slide-accent) 75%, transparent), -72px 42px 0 -35px color-mix(in srgb, var(--slide-accent) 50%, transparent), 0 0 45px color-mix(in srgb, var(--slide-accent) 60%, transparent); }
+
 @media (prefers-reduced-motion: reduce) {
   .me::after,
   .fab::before,
