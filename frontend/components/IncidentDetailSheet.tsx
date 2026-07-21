@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Category, IncidentDetails, IncidentStatus } from "@pulso/core";
+import { IncidentComments } from "@/components";
 import { config, confirmIncident, getIncidentDetails, haversineMeters } from "@/lib";
 import Icon from "./Icon";
 
@@ -219,6 +220,8 @@ export default function IncidentDetailSheet({
                   {voteError}
                 </p>
               )}
+
+              {details && <IncidentComments incidentId={incidentId} />}
             </>
           )}
         </div>

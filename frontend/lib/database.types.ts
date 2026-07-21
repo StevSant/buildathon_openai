@@ -90,6 +90,45 @@ export type Database = {
           },
         ]
       }
+      incident_comments: {
+        Row: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          incident_id: string
+        }
+        Insert: {
+          author_id: string
+          body: string
+          created_at?: string
+          id?: string
+          incident_id: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          incident_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_comments_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incident_comments_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incident_confirmations: {
         Row: {
           created_at: string
@@ -288,6 +327,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_incident_comment: {
+        Args: { comment_body: string; target_id: string }
+        Returns: {
+          author_verified: boolean
+          body: string
+          created_at: string
+          id: string
+        }[]
+      }
       confirm_incident: {
         Args: {
           confirm_threshold?: number
@@ -307,6 +355,15 @@ export type Database = {
           contact_id: string
           phone_e164: string
           user_id: string
+        }[]
+      }
+      get_incident_comments: {
+        Args: { target_id: string }
+        Returns: {
+          author_verified: boolean
+          body: string
+          created_at: string
+          id: string
         }[]
       }
       get_incident_details: {

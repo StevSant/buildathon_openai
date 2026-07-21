@@ -376,6 +376,22 @@ body {
 .notif .nt { font-size: 13.5px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
 .notif .nmeta { display: flex; gap: 9px; margin-top: 6px; font-size: 11px; color: var(--muted); align-items: center; flex-wrap: wrap; }
 .notif .undot { position: absolute; top: 12px; right: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+/* Anonymous incident discussion. Comment author identity is intentionally never displayed. */
+.comments { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 15px; }
+.comments-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.section-label { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.comments-list { display: flex; flex-direction: column; gap: 9px; max-height: 220px; overflow-y: auto; }
+.comment { display: flex; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.comment-mark { width: 26px; height: 26px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 9px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.comment-mark .i { width: 14px; height: 14px; }
+.comment p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-meta { display: block; margin-top: 5px; font-size: 10px; font-weight: 700; color: var(--muted); }
+.comments-empty { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.comment-form textarea { width: 100%; min-height: 74px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: var(--ink); padding: 10px; font: inherit; font-size: 12px; outline: none; }
+.comment-form textarea:focus { border-color: var(--accent); }
+.comment-form-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.comment-error { margin: 8px 0 0; font-size: 11px; color: var(--sev-fire); }
 .tagpri { font: 700 9px/1 var(--sans); letter-spacing: 0.05em; text-transform: uppercase; padding: 3px 6px; border-radius: 5px; }
 .pri-alert { color: #fff; background: color-mix(in srgb, var(--sev-fire) 72%, transparent); }
 .pri-soft { color: var(--muted); background: var(--panel-2); }
@@ -387,6 +403,16 @@ body {
 @keyframes drop { 0% { transform: translate(-50%, -160%) rotate(45deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: translate(-50%, -100%) rotate(45deg); } }
 @keyframes ping { 0% { transform: rotate(-45deg) scale(0.6); opacity: 0.9; } 100% { transform: rotate(-45deg) scale(2.4); opacity: 0; } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* Standalone presentations route: abstract urban motion, intentionally separate from product UI. */
+.presentation-visual { position: absolute; inset: 0; }
+.presentation-visual::before, .presentation-visual::after { content: ""; position: absolute; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--slide-accent) 65%, transparent); }
+.presentation-visual--signal::before { width: 220px; height: 220px; right: 12%; top: 50%; transform: translateY(-50%); box-shadow: 0 0 0 28px color-mix(in srgb, var(--slide-accent) 8%, transparent), 0 0 0 58px color-mix(in srgb, var(--slide-accent) 5%, transparent); }
+.presentation-visual--signal::after { width: 13px; height: 13px; right: calc(12% + 103px); top: calc(50% - 6px); background: var(--slide-accent); box-shadow: 0 0 24px var(--slide-accent); }
+.presentation-visual--waves::before { width: 130%; height: 200%; left: -15%; top: 38%; border-width: 28px 0 0; transform: rotate(-10deg); box-shadow: 0 -42px 0 -25px color-mix(in srgb, var(--slide-accent) 65%, transparent), 0 -84px 0 -55px color-mix(in srgb, var(--slide-accent) 50%, transparent); }
+.presentation-visual--waves::after { width: 75px; height: 75px; right: 17%; top: 23%; background: color-mix(in srgb, var(--slide-accent) 18%, transparent); box-shadow: 0 0 48px var(--slide-accent); }
+.presentation-visual--orbit::before { width: 260px; height: 92px; right: 8%; top: 26%; transform: rotate(-22deg); }
+.presentation-visual--orbit::after { width: 86px; height: 86px; right: 33%; top: 37%; background: var(--slide-accent); border: 0; box-shadow: 116px -60px 0 -27px color-mix(in srgb, var(--slide-accent) 75%, transparent), -72px 42px 0 -35px color-mix(in srgb, var(--slide-accent) 50%, transparent), 0 0 45px color-mix(in srgb, var(--slide-accent) 60%, transparent); }
 
 @media (prefers-reduced-motion: reduce) {
   .me::after,
