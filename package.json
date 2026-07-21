@@ -1,0 +1,22 @@
+{
+  "name": "pulso",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pulso — civic real-time urban-incident reporting PWA (npm workspaces monorepo).",
+  "workspaces": [
+    "backend/core",
+    "backend/adapters",
+    "frontend"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p backend/core/tsconfig.json && tsc -p backend/adapters/tsconfig.json && npm run typecheck --workspace @pulso/web",
+    "typecheck:core": "tsc -p backend/core/tsconfig.json",
+    "typecheck:adapters": "tsc -p backend/adapters/tsconfig.json",
+    "typecheck:frontend": "npm run typecheck --workspace @pulso/web",
+    "build": "npm run build --workspace @pulso/web",
+    "dev": "npm run dev --workspace @pulso/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

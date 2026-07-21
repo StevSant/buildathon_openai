@@ -1,0 +1,35 @@
+{
+  // Shared TypeScript base for every workspace.
+  //
+  // Path aliases let consumers import the packages by name instead of by relative
+  // path. Both aliases point at each package's `index.ts` barrel:
+  //   import { makeVerifyIdentity } from "@pulso/core";
+  //   import { AlgorithmicVerifier } from "@pulso/adapters";
+  // Never reach into deep files (e.g. "@pulso/core/domain/incident") — import from
+  // the package barrel so the public surface stays curated.
+  //
+  // `verbatimModuleSyntax` forces explicit `import type` / `export type`, which keeps
+  // `core/` and the type-only adapter imports safe to load from Deno (Edge Functions)
+  // as well as Node (Next.js).
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "baseUrl": ".",
+    "paths": {
+      "@pulso/core": ["./backend/core/index.ts"],
+      "@pulso/adapters": ["./backend/adapters/index.ts"]
+    }
+  }
+}
