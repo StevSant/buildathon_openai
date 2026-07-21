@@ -49,7 +49,7 @@ create table public.profiles (
   verified            boolean not null default false,
   verification_method text check (verification_method in ('registry','algorithmic')),
   trust_score         integer not null default 0,
-  disabled_at         timestamptz,                 -- non-null means disabled; row/hash are retained (ADR-020)
+  disabled_at         timestamptz,                 -- non-null → account disabled (ADR-020); rows are never deleted
   created_at          timestamptz not null default now()
 );
 
