@@ -41,7 +41,7 @@ export default function AuthGuard({ children }: { children: ReactNode }) {
       <div
         role="status"
         aria-live="polite"
-        className="flex min-h-screen items-center justify-center bg-canvas text-sm text-muted"
+        className="app-shell items-center justify-center text-sm text-muted"
       >
         Verificando sesión…
       </div>

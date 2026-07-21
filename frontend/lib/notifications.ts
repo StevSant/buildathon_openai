@@ -1,4 +1,6 @@
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { config } from "./config";
+import { supabase } from "./supabase";
 
 // Where a nearby-incident notification should surface. Every incident always lands in the
 // notification center; this decides the *transient* surface on top of that:
@@ -14,4 +16,19 @@ export function decideAlertTier(params: {
   const isSevere = params.severity >= config.alertMinSeverity;
   const isClose = params.distanceMeters < config.alertRadiusMeters;
   return isSevere && isClose ? "sheet" : "toast";
+}
+
+// Notifications deliberately own a channel separate from the map so either surface can
+// subscribe and clean up independently (Contract §3.4).
+export function subscribeToNotificationIncidents(
+  onChange: () => void,
+): RealtimeChannel {
+  return supabase
+    .channel("incidents-notifications")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "incidents" },
+      onChange,
+    )
+    .subscribe();
 }
