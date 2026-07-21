@@ -3,6 +3,9 @@
 > **RETIRED — DO NOT EXECUTE.** C1 at
 > `plans/integrations/C1-hermes-chat-integration.md` supersedes this plan and preserves its
 > non-messaging correctness fixes while replacing the obsolete Hermes REST/template contract.
+> Its historical composition-root example also predates request-path authentication. Never copy
+> it: user paths require a validated Supabase JWT, database-webhook paths require the constant-time
+> `PROXIMITY_WEBHOOK_SECRET` check, and neither may create service-role dependencies first.
 
 > **For the executing engineer (Codex):** implement task-by-task, top to bottom. Steps use
 > checkbox (`- [ ]`) syntax. There are NO automated tests (ADR-015) — you verify each task by
@@ -105,7 +108,7 @@ git commit -m "fix(safety): map emergency_contacts to real columns (opt_in_statu
 
 **Interfaces:**
 - Consumes: `incidents.findAlertRecipients`, `profiles.getEmergencyContacts`, `messaging.sendWhatsApp`.
-- Produces: `(input) => Promise<{ sent: number; results: Array<{ contactId: string; id: string; status: string }> }>`.
+- Produces: `(input) => Promise<{ sent: number; failed: number; results: Array<{ contactId: string; id: string; status: string }> }>`.
 
 - [ ] **Step 1: Rewrite the use-case**
 
@@ -114,6 +117,7 @@ import type { IncidentRepository, MessagingGateway, ProfileRepository } from '..
 
 type DispatchResult = {
   sent: number;
+  failed: number;
   results: Array<{ contactId: string; id: string; status: string }>;
 };
 
@@ -152,25 +156,33 @@ export function makeDispatchProximityAlerts({
           ];
 
     const results: Array<{ contactId: string; id: string; status: string }> = [];
+    let sent = 0;
+    let failed = 0;
     for (const recipient of recipients) {
       for (const contact of recipient.contacts) {
         // Both paths pre-filter to accepted; only skip if a status is present and not accepted.
         if ('status' in contact && (contact as { status?: string }).status !== 'accepted') continue;
         try {
-          const sent = await messaging.sendWhatsApp({
+          const delivery = await messaging.sendWhatsApp({
             to: contact.phone,
             template: input.template,
             params: input.params,
           });
-          results.push({ contactId: contact.id, id: sent.id, status: sent.status || 'sent' });
+          results.push({
+            contactId: contact.id,
+            id: delivery.id,
+            status: delivery.status || 'sent',
+          });
+          sent += 1;
         } catch {
           // A single failed send must not abort the whole fan-out.
           results.push({ contactId: contact.id, id: '', status: 'failed' });
+          failed += 1;
         }
       }
     }
 
-    return { sent: results.length, results };
+    return { sent, failed, results };
   };
 }
 ```

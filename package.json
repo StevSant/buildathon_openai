@@ -9,6 +9,7 @@
     "frontend"
   ],
   "scripts": {
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.mjs",
     "typecheck": "tsc -p backend/core/tsconfig.json && tsc -p backend/adapters/tsconfig.json && npm run typecheck --workspace @pulso/web",
     "typecheck:core": "tsc -p backend/core/tsconfig.json",
     "typecheck:adapters": "tsc -p backend/adapters/tsconfig.json",

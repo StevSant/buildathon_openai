@@ -11,14 +11,15 @@ A time-boxed plan for a **team of 3** over a **~9-hour** day. Times are relative
 
 | Code | Role | Owns |
 |---|---|---|
-| **B** | Backend / Data | Supabase schema, PostGIS, RLS, RPC, seed; Edge Functions `verify-identity`, `analyze-report`, `agent-tools`; `proximity-dispatcher` (P2 safety layer) |
-| **F** | Frontend / Map | Next.js app, MapLibre map, Realtime subscription, report form + camera, auth screens |
-| **A** | AI / Voice | `create-realtime-session`, WebRTC session, tool bridge, prompts/persona, vision analysis prompt |
+| **A** | Frontend | `frontend/`: Next.js app, MapLibre, Realtime UI, reporting, auth, and the browser voice/tool bridge |
+| **B** | Backend | `backend/core/`, non-messaging adapters and Edge Functions, Supabase schema/PostGIS/RLS/RPC/seed, and the B1+B6 contract gate |
+| **C** | Integrations & delivery | Hermes/WhatsApp messaging carve-out, deployment, smoke tests, README/demo/rubric evidence |
 
-Pair up at integration gates. The three tracks run **in parallel from H0** against the
-**ports** defined in `core/` (see [ARCHITECTURE §8](ARCHITECTURE.md)) — B owns persistence +
-identity adapters, A owns AI adapters + agent use-cases, F owns the UI + thin HTTP clients —
-so nobody blocks on day one.
+Pair up at integration gates. The three tracks start in parallel against
+[`plans/CONTRACT.md`](../plans/CONTRACT.md), with one deliberate sequencing point: Person B
+finishes the B1+B6 schema/anonymous-reporting gate and announces **B1+B6 frozen** before any
+dependent migration or shared-document work continues. Exact file ownership is in
+[`plans/00-README.md`](../plans/00-README.md).
 
 ## Golden rule
 **Seed data and a rehearsed demo beat one more feature.** Freeze scope at H7. Anything not
@@ -35,41 +36,44 @@ integrated by then is cut, not finished.
 - [ ] Vercel project linked to the repo.
 - [ ] `.env.local` filled from [README](../README.md#environment-variables); MapLibre style URL chosen.
 - [ ] **Set `NEXT_PUBLIC_DEFAULT_LAT/LNG` to the venue** and note the venue coords for the seed.
-- [ ] Define the four **core ports** + domain types in `core/` — the shared contract everyone
-      codes against (the fifth, `MessagingGateway`, comes with the P2 safety layer).
+- [ ] Review the frozen HTTP/RPC/types in `plans/CONTRACT.md` and the ports in `backend/core/`.
 - **Gate 0:** everyone can run `next dev` and reach Supabase.
 
 ### H1 · 09:45–11:30 — Foundations (parallel)
-- **B:** Apply `docs/DATA-MODEL.md` SQL as migration `0001_init.sql`; `db push`. Run the
-  seed with venue coords. Verify `get_nearby_incidents` returns rows from the SQL editor.
-- **F:** Next.js app skeleton (**mobile-first**: full-screen map, large tap targets);
+- **B:** Execute B1 then B6 as one schema gate: apply the migrations, seed venue data,
+  verify RLS/RPC behavior (including anonymous reports), then announce **B1+B6 frozen**.
+- **A:** Next.js app skeleton (**mobile-first**: full-screen map, large tap targets);
   `IncidentMap` renders MapLibre centered on the venue; fetch incidents via
   `supabase.rpc('get_nearby_incidents', …)` and drop markers.
-- **A:** `create-realtime-session` deployed; from a scratch page, open a WebRTC session and
-  get the agent to **say hello** (no tools yet). Confirms secrets + audio path work.
-- **Gate 1 (11:30):** map shows seeded incidents · agent speaks · RPC works. **This is the riskiest gate — protect it.**
+- **C:** Build and typecheck the C1 Hermes bridge locally without changing B-owned
+  migrations; prepare deployment inputs and webhook secrets.
+- **Gate 1 (11:30):** map shows seeded incidents · B1+B6 is frozen · C1 typechecks.
+  **This is the riskiest gate — protect it.**
 
 ### H2 · 11:30–13:00 — Core features (parallel)
-- **B:** `analyze-report` (photo → OpenAI Responses, structured output → fields). Create
-  `report-photos` bucket + policy. `agent-tools` router with `get_nearby_incidents` +
-  `get_incident_details` (JWT → `auth.getUser()`, input validation, RPC calls).
-- **F:** `/auth` sign-up (email + password + cédula) calling `verify-identity`; `/report`
+- **B:** Implement the non-messaging backend: `verify-identity`, `analyze-report`,
+  `create-realtime-session`, and `agent-tools`, with authenticated user derivation and
+  strict input validation.
+- **A:** `/auth` sign-up (email + password + cédula) calling `verify-identity`; `/report`
   camera/upload → Storage → `analyze-report` → editable review → publish (INSERT).
 - **A:** Tool bridge in `realtime-agent.ts`: handle `response.function_call_arguments.done`
   → invoke `agent-tools` → `function_call_output` → `response.create`. Inject geolocation
   as a `conversation.item.create` context message (not `session.update`, which would
   overwrite the server-set persona). Finalize the "Cerca" persona/instructions.
-- **B:** `verify-identity` (external provider attempt → module-10 fallback → HMAC hash → upsert profile).
+- **C:** After **B1+B6 frozen**, configure Supabase/Vercel/Hermes, deploy C1, and begin C2
+  smoke tests. Do not edit B-owned migrations.
 
 ### Lunch / buffer · 13:00–13:30
 Eat at your desk if a gate slipped. Do **not** start new features during buffer.
 
 ### H3 · 13:30–15:00 — Integration (pair up)
-- [ ] **F+A:** End-to-end voice: "¿qué está pasando cerca de mí?" → agent calls tool →
+- [ ] **A+B:** End-to-end voice: "¿qué está pasando cerca de mí?" → agent calls tool →
       speaks real seeded incidents; follow-up → `get_incident_details`.
-- [ ] **F+B:** Report a real incident with photo → AI fills fields → publish → it appears
+- [ ] **A+B:** Report a real incident with photo → AI fills fields → publish → it appears
       on a **second device's** map live (Realtime).
-- [ ] **B+F:** Sign-up with a valid cédula succeeds; invalid cédula blocked; duplicate blocked.
+- [ ] **A+B:** Sign-up with a valid cédula succeeds; invalid cédula blocked; duplicate blocked.
+- [ ] **B+C (P2):** Signed DB webhook → proximity match → Hermes WhatsApp delivery; manual
+      SOS preserves the frozen `{ type: "sos", location: { lat, lng } }` contract.
 - **Gate 3 (15:00):** the full four-pillar thread runs once, end to end, on two devices.
 
 ### H4 · 15:00–16:30 — Polish + P1
@@ -129,7 +133,7 @@ Eat at your desk if a gate slipped. Do **not** start new features during buffer.
 | Structured output drift from vision | Strict JSON schema + server-side validation; default fields on parse failure |
 | Realtime not firing | Confirm table is in the `supabase_realtime` publication; fall back to polling every 5s |
 | Cédula edge cases | Sanity-check the algorithmic validator by hand against a few known valid/invalid numbers |
-| Hermes WhatsApp gateway down/slow (P2) | Safety layer is P2 — cut first; leave `HERMES_*` unset in dev (dispatcher errors out cleanly); core demo unaffected |
+| Hermes WhatsApp gateway down/slow (P2) | Safety layer is P2 — cut first; leave `HERMES_WEBHOOK_URL` unset in dev (dispatcher errors out cleanly); core demo unaffected |
 
 ## Definition of done (per pillar)
 - **Map:** seeded + live incidents render near the venue; a new insert appears on another device ≤2s.
@@ -143,4 +147,4 @@ Eat at your desk if a gate slipped. Do **not** start new features during buffer.
 - [ ] `create-next-app` + deps install verified on each machine.
 - [ ] Two charged demo devices; browsers with mic/geolocation permissions pre-granted.
 - [ ] This repo cloned on every machine; everyone has read PRD + ARCHITECTURE.
-- [ ] *(P2 only)* Hermes WhatsApp creds (`HERMES_*`) + a test contact number, if attempting the safety layer.
+- [ ] *(P2 only)* Hermes webhook URL/shared secret, `PROXIMITY_WEBHOOK_SECRET`, and a test contact number.

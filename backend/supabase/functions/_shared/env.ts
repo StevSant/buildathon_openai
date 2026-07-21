@@ -2,7 +2,7 @@
 // tunable comes from here. SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY are
 // injected automatically by the Supabase runtime; the rest are set via `supabase secrets set`.
 // Variable names mirror the root .env.example exactly.
-// TODO (deploy): set OPENAI_API_KEY, CEDULA_HASH_PEPPER, HERMES_* and any optional overrides.
+// TODO (deploy): set OPENAI_API_KEY, CEDULA_HASH_PEPPER, messaging secrets, and overrides.
 
 function must(name: string): string {
   const value = Deno.env.get(name);
@@ -40,6 +40,7 @@ export function getEnv() {
     whatsappProximityTemplate:
       Deno.env.get("WHATSAPP_PROXIMITY_TEMPLATE") ?? "pulso_proximity_alert",
     whatsappSosTemplate: Deno.env.get("WHATSAPP_SOS_TEMPLATE") ?? "pulso_sos",
+    proximityWebhookSecret: optional("PROXIMITY_WEBHOOK_SECRET"),
 
     // Query bounds / thresholds / locale
     maxRadiusMeters: Number(Deno.env.get("MAX_RADIUS_METERS") ?? "10000"),

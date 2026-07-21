@@ -41,10 +41,11 @@ URL on their own phone. See [ADR-013](docs/DECISIONS.md).
 
 ## Repository layout
 
-Two top-level lanes — `frontend/` (Next.js) and `backend/` (Supabase + shared hexagon) — so
-two people work in parallel without touching the same files. Pragmatic hexagonal (ports &
-adapters): a dependency-free `backend/core/` is shared by the app (Node) and the Edge Functions
-(Deno). See [ARCHITECTURE §8](docs/ARCHITECTURE.md#8-code-architecture--pragmatic-hexagonal-ports--adapters)
+Three file-owned delivery lanes keep the team moving independently: `frontend/` (Next.js),
+`backend/` (Supabase + shared hexagon), and `plans/integrations/` (Hermes, deployment, and
+demo delivery). Pragmatic hexagonal (ports & adapters): a dependency-free `backend/core/`
+is shared by the app (Node) and the Edge Functions (Deno). See
+[ARCHITECTURE §8](docs/ARCHITECTURE.md#8-code-architecture--pragmatic-hexagonal-ports--adapters)
 and [`plans/CONTRACT.md`](plans/CONTRACT.md) for the frozen frontend↔backend seam.
 
 ```
@@ -57,7 +58,7 @@ backend/
     functions/        # verify-identity · analyze-report · create-realtime-session
                       # agent-tools · proximity-dispatcher (thin handlers + composition roots)
 docs/                 # PRD · ARCHITECTURE · DATA-MODEL · DECISIONS · PLAN · DEMO · PITCH
-plans/                # CONTRACT.md + 00-README.md + Codex plans (frontend/ + backend/ lanes)
+plans/                # contract + orchestration + frontend/backend/integrations lanes
 ```
 
 ## Documentation
@@ -86,6 +87,7 @@ npm run dev                  # Next.js dev server (frontend/)
 # 2. Supabase (project created in dashboard; enable PostGIS extension)
 npm i -g supabase
 supabase login
+cd backend
 supabase link --project-ref <your-ref>
 # migrations live in backend/supabase/migrations/ (0001_init, 0002_whatsapp_sos):
 supabase db push
@@ -117,7 +119,7 @@ NEXT_PUBLIC_ALERT_SEVERITY_MIN=4         # min severity for a bottom-sheet alert
 NEXT_PUBLIC_ALERT_RADIUS_METERS=500      # max distance (m) for a bottom-sheet alert
 NEXT_PUBLIC_VENUE_NAME="Cdla. Primero de Mayo"   # map-header sector label
 NEXT_PUBLIC_VENUE_CITY=Portoviejo                # map-header city label
-NEXT_PUBLIC_OPENAI_REALTIME_URL=https://api.openai.com/v1/realtime   # WebRTC SDP endpoint
+NEXT_PUBLIC_OPENAI_REALTIME_URL=https://api.openai.com/v1/realtime/calls   # WebRTC SDP endpoint
 
 # --- Supabase Edge Function secrets (server-side only) ---
 OPENAI_API_KEY=sk-...
@@ -136,11 +138,14 @@ DISPUTE_THRESHOLD=3                      # disputes → 'disputed' (confirm_inci
 TRUST_VERIFIED_BONUS=10                  # trust-score weights (helper not wired yet)
 TRUST_PER_CONFIRMED=2
 TRUST_PER_DISPUTED=3
-HERMES_API_URL=                          # (P2 safety layer) WhatsApp gateway base URL — empty = disabled
-HERMES_API_KEY=                          # (P2) WhatsApp gateway key
-HERMES_WHATSAPP_FROM=                    # (P2) sender number/id for outbound WhatsApp
-WHATSAPP_PROXIMITY_TEMPLATE=pulso_proximity_alert  # (P2) Hermes template for proximity alerts
-WHATSAPP_SOS_TEMPLATE=pulso_sos                    # (P2) Hermes template for manual SOS
+HERMES_API_URL=                          # (P2) current Hermes send endpoint — empty = disabled
+HERMES_API_KEY=                          # (P2) current Hermes API credential
+HERMES_WHATSAPP_FROM=                    # (P2) current sender number/id
+WHATSAPP_PROXIMITY_TEMPLATE=pulso_proximity_alert
+WHATSAPP_SOS_TEMPLATE=pulso_sos
+HERMES_WEBHOOK_URL=                      # (C1 target) Hermes pulso-alerts webhook URL
+HERMES_WEBHOOK_SECRET=                   # (C1 target) signed dispatcher requests
+PROXIMITY_WEBHOOK_SECRET=                # (P2) authenticates Supabase DB-webhook fan-out
 TIMEZONE=America/Guayaquil
 DEFAULT_LANGUAGE=es
 ```

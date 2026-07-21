@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, config } from "@/lib";
+import { config, readVerifiedIdentityResponse, supabase } from "@/lib";
 
 type Mode = "signup" | "signin";
 
@@ -30,11 +30,7 @@ export default function AuthForm() {
       },
       body: JSON.stringify({ cedula }),
     });
-    if (!res.ok) {
-      // CONTRACT §4: failures come back as { error }.
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error ?? "No pudimos verificar tu cédula");
-    }
+    await readVerifiedIdentityResponse(res);
   }
 
   async function onSubmit(e: React.FormEvent) {

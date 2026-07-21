@@ -13,6 +13,9 @@ export { REALTIME_TOOLS } from "./realtime-tools";
 export { decideAlertTier } from "./notifications";
 export type { AlertTier } from "./notifications";
 export { startRealtimeSession } from "./realtime-agent";
+export { readVerifiedIdentityResponse } from "./identity-verification";
+export { authDestination } from "./auth-state";
+export type { AuthSessionLike } from "./auth-state";
 export type {
   AssistantHandle,
   AssistantStatus,

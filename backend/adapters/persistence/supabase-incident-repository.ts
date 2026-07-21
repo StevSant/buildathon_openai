@@ -144,8 +144,8 @@ export class SupabaseIncidentRepository implements IncidentRepository {
     _userId: string,
     kind: ConfirmationKind,
   ): Promise<{ id: string; confirmations: number; status: IncidentStatus }> {
-    // The user identity is derived from the JWT inside the RPC (security invoker),
-    // never trusted from arguments. The RPC's second arg is `kind` (confirm | dispute);
+    // The restricted privileged RPC derives identity from auth.uid(), validates the caller,
+    // and never trusts a user id from arguments. Its second arg is `kind` (confirm | dispute);
     // thresholds are only sent when injected so the SQL defaults stay authoritative.
     const { data, error } = await this.client.rpc('confirm_incident', {
       target_id: id,

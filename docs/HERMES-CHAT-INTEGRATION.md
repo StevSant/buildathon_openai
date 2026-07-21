@@ -154,14 +154,11 @@ retired for the Baileys demo path.
   no dangerous toolset is ever reachable from a chat. Also pin `terminal.backend: docker` as
   defence-in-depth.
 - **Identity by phone match (authenticates the user).** The WhatsApp sender number is
-  asserted by the transport (WhatsApp proved phone ownership at account creation) — it is *not*
-  self-reported. So the shim maps `sender_e164 → whatsapp_config.phone_e164 → user_id` (service
-  role) and runs each tool as that user. Because the inbound message itself proves ownership, no
-  separate in-app OTP is needed — and we may set `whatsapp_config.verified = true` on first
-  matched inbound (closing the gap F6 left open). This makes **all three tools** safe over
-  WhatsApp, including the `confirm_incident` write. Reads (`get_nearby_incidents` /
-  `get_incident_details`) are public civic data and still work for an unmatched sender (anon/
-  service token); only the write requires a match.
+  asserted by the transport — it is *not* self-reported. The shim maps
+  `sender_e164 → whatsapp_config.phone_e164 → user_id` with the service role, mints a short-lived
+  JWT for that matched Pulso account, and runs every tool as that user. **Unmatched senders cannot
+  invoke any Pulso tool.** `get_nearby_incidents` also requires explicit `user_lat` and
+  `user_long`; Hermes must never invent a location or substitute venue coordinates.
   **Remaining dependency (test on the VM):** whether an MCP `tools/call` carries the WhatsApp
   sender context. If yes → automatic + strict. If no → surface the sender in the agent context
   (system prompt `remitente: +593…`) and pass it as a tool arg (works, model-mediated).
@@ -179,7 +176,7 @@ See the deployable files in [`docs/hermes/`](hermes/). Summary:
 
 | File (`~/.hermes/`) | Purpose | Key entries |
 |---|---|---|
-| `.env` | secrets | `WHATSAPP_ENABLED`, `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS`, `OPENAI_API_KEY`, `AGENT_TOOLS_URL`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `PULSO_WEBHOOK_SECRET` |
+| `.env` | secrets | `WHATSAPP_ENABLED`, `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS`, `OPENAI_API_KEY`, `AGENT_TOOLS_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `PULSO_WEBHOOK_SECRET` |
 | `config.yaml` | behaviour | `model:` (OpenAI), `platforms.whatsapp`, `mcp_servers.pulso` (→ toolset `mcp-pulso`), `platform_toolsets.whatsapp: [mcp-pulso]` (allowlist), `terminal.backend: docker` |
 | `SOUL.md` | personality | agent identity, tone, tool rules, safety (§9) |
 | `auth.json` | OAuth | only if Nous Portal is used for the model |
@@ -190,6 +187,7 @@ Pulso side (repo `.env` / Supabase secrets), replacing the old `HERMES_*` send v
 |---|---|
 | `HERMES_WEBHOOK_URL` | the `pulso-alerts` webhook the dispatcher POSTs to |
 | `HERMES_WEBHOOK_SECRET` | shared secret to authenticate the POST |
+| `PROXIMITY_WEBHOOK_SECRET` | shared secret authenticating the database webhook that invokes `proximity-dispatcher` |
 | *(no new tool endpoint)* | tools reuse `agent-tools` unchanged; the VM shim holds `SUPABASE_JWT_SECRET` to mint per-user JWTs — backend frozen |
 
 ## 9. Agent personality
@@ -211,8 +209,8 @@ Design-only for now; these are the code edits `writing-plans` will sequence:
    `agent-tools` edge function. No new Supabase edge function; the backend stays frozen.
 2. **Rework:** `HermesWhatsAppGateway` → POST to `HERMES_WEBHOOK_URL` with the shared secret.
 3. **Rework:** `proximity-dispatcher` → send `{ to, kind, incident }` per recipient; drop templates.
-4. **Edit:** `_shared/env.ts` + repo `.env.example` → swap `HERMES_API_*`/`WHATSAPP_*_TEMPLATE`
-   for `HERMES_WEBHOOK_URL` / `HERMES_WEBHOOK_SECRET` / `PULSO_MCP_TOKEN`.
+4. **Edit:** `_shared/env.ts` + repo `.env.example` → use `HERMES_WEBHOOK_URL`,
+   `HERMES_WEBHOOK_SECRET`, and `PROXIMITY_WEBHOOK_SECRET`.
 5. **Update:** ADR-017 to reflect Hermes-as-agent; note WhatsApp remains a P1/P2 cuttable layer.
 
 ## 11. Rubric fit

@@ -1,6 +1,7 @@
 // Barrel for UI components. Screens import from "@/components", never from deep files.
 export { default as TabBar } from "./TabBar";
 export { default as AuthForm } from "./AuthForm";
+export { default as AuthGuard } from "./AuthGuard";
 export { default as IncidentMap } from "./IncidentMap";
 export { default as ReportForm } from "./ReportForm";
 export { default as RealtimeAssistant } from "./RealtimeAssistant";

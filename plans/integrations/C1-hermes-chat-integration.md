@@ -143,7 +143,7 @@ git commit -m "feat(messaging): POST to the Hermes pulso-alerts webhook instead 
 **Interfaces:**
 - Consumes: `IncidentRepository.findAlertRecipients`, `ProfileRepository.getEmergencyContacts`,
   `MessagingGateway.sendWhatsApp` (Task 1).
-- Produces: `(input) => Promise<{ sent: number; results: Array<{ contactId: string; id: string;
+- Produces: `(input) => Promise<{ sent: number; failed: number; results: Array<{ contactId: string; id: string;
   status: string }> }>` where `input` is
   `{ kind: 'proximity'; incidentId: string; context?: Record<string, unknown> }` **or**
   `{ kind: 'sos'; userId: string; context?: Record<string, unknown> }`.
@@ -155,6 +155,7 @@ import type { IncidentRepository, MessagingGateway, ProfileRepository } from '..
 
 type DispatchResult = {
   sent: number;
+  failed: number;
   results: Array<{ contactId: string; id: string; status: string }>;
 };
 
@@ -194,25 +195,33 @@ export function makeDispatchProximityAlerts({
           ];
 
     const results: DispatchResult['results'] = [];
+    let sent = 0;
+    let failed = 0;
     for (const recipient of recipients) {
       for (const contact of recipient.contacts) {
         // Both paths pre-filter to accepted; only skip if a status is present and not accepted.
         if ('status' in contact && (contact as { status?: string }).status !== 'accepted') continue;
         try {
-          const sent = await messaging.sendWhatsApp({
+          const delivery = await messaging.sendWhatsApp({
             to: contact.phone,
             kind: input.kind,
             context: input.context,
           });
-          results.push({ contactId: contact.id, id: sent.id, status: sent.status || 'sent' });
+          results.push({
+            contactId: contact.id,
+            id: delivery.id,
+            status: delivery.status || 'sent',
+          });
+          sent += 1;
         } catch {
           // A single failed send must not abort the whole fan-out.
           results.push({ contactId: contact.id, id: '', status: 'failed' });
+          failed += 1;
         }
       }
     }
 
-    return { sent: results.length, results };
+    return { sent, failed, results };
   };
 }
 ```
@@ -257,6 +266,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { getEnv } from "../_shared/env.ts";
 import { createServiceClient } from "../_shared/service-client.ts";
 import { createUserClient } from "../_shared/supabase-client.ts";
+import { hasValidWebhookSecret } from "../_shared/webhook-auth.ts";
 
 // Composition root for proximity alerts + SOS + contact opt-in. Runs with the service role
 // because it reads/writes across users. verify_jwt = false (a DB webhook has no user JWT); the
@@ -264,9 +274,28 @@ import { createUserClient } from "../_shared/supabase-client.ts";
 // Sends go through the MessagingGateway port → HermesWhatsAppGateway → Hermes "pulso-alerts" webhook.
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") {
+    return Response.json({ error: "method not allowed" }, { status: 405, headers: corsHeaders });
+  }
   try {
     const env = getEnv();
-    if (!env.hermesWebhookUrl || !env.hermesWebhookSecret || !env.proximityWebhookSecret) {
+    const body = await req.json().catch(() => ({}));
+    const isUserRequest = Boolean(body.optin?.contactId) || body.type === "sos";
+    let ownerId: string | undefined;
+
+    // Authenticate the request before creating any service-role client or messaging dependency.
+    if (isUserRequest) {
+      const { data } = await createUserClient(req).auth.getUser();
+      ownerId = data.user?.id;
+      if (!ownerId) throw new Error("unauthorized");
+    } else if (
+      !env.proximityWebhookSecret ||
+      !hasValidWebhookSecret(req, env.proximityWebhookSecret)
+    ) {
+      throw new Error("unauthorized");
+    }
+
+    if (!env.hermesWebhookUrl || !env.hermesWebhookSecret) {
       throw new Error("HERMES_WEBHOOK_* no configurado");
     }
 
@@ -281,18 +310,13 @@ Deno.serve(async (req) => {
     });
     const dispatch = makeDispatchProximityAlerts({ incidents, profiles, messaging });
 
-    const body = await req.json().catch(() => ({}));
-
     // ---- Opt-in: a contact was just added; ask them to accept over WhatsApp (FR-23) ----
     if (body.optin?.contactId) {
-      const { data } = await createUserClient(req).auth.getUser();
-      const ownerId = data.user?.id;
-      if (!ownerId) throw new Error("unauthorized");
       const { data: contact } = await service
         .from("emergency_contacts")
         .select("id, phone_e164")
         .eq("id", body.optin.contactId)
-        .eq("owner_id", ownerId)
+        .eq("owner_id", ownerId!)
         .single();
       if (!contact) throw new Error("contacto no encontrado");
       await messaging.sendWhatsApp({ to: contact.phone_e164, kind: "optin" });
@@ -301,12 +325,9 @@ Deno.serve(async (req) => {
 
     // ---- SOS: message the caller's own accepted contacts immediately (FR-26) ----
     if (body.type === "sos" && body.location) {
-      const { data } = await createUserClient(req).auth.getUser();
-      const ownerId = data.user?.id;
-      if (!ownerId) throw new Error("unauthorized");
       const result = await dispatch({
         kind: "sos",
-        userId: ownerId,
+        userId: ownerId!,
         context: { lat: body.location.lat, lng: body.location.lng },
       });
       await logDispatches(service, null, result.results);
@@ -316,15 +337,12 @@ Deno.serve(async (req) => {
     // ---- Proximity: a DB webhook sends { record: { id } }; a manual call may send { incidentId } ----
     const incidentId = body.incidentId ?? body.record?.id;
     if (!incidentId) throw new Error("incidentId requerido");
-    if (req.headers.get("x-pulso-webhook-secret") !== env.proximityWebhookSecret) {
-      throw new Error("unauthorized");
-    }
     const result = await dispatch({ kind: "proximity", incidentId });
     await logDispatches(service, incidentId, result.results);
     return Response.json({ dispatched: result.sent }, { headers: corsHeaders });
   } catch (err) {
     const message = err instanceof Error ? err.message : "error";
-    const status = message === "unauthorized" ? 401 : 400;
+    const status = message === "unauthorized" ? 401 : message.includes("no configurado") ? 500 : 400;
     return Response.json({ error: message }, { status, headers: corsHeaders });
   }
 });
