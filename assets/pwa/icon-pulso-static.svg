@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Pulso — radar de incidentes urbanos">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#132638"/><stop offset="1" stop-color="#060a10"/>
+    </linearGradient>
+    <radialGradient id="disc" cx="0.5" cy="0.46" r="0.55">
+      <stop offset="0" stop-color="#10202f"/><stop offset="1" stop-color="#091019"/>
+    </radialGradient>
+    <linearGradient id="sweep" x1="256" y1="256" x2="452" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#35E0C1" stop-opacity="0"/>
+      <stop offset="0.55" stop-color="#35E0C1" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#7BFFEA" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="pinRed" x1="0" y1="-80" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8A8A"/><stop offset="0.5" stop-color="#FF4D4D"/><stop offset="1" stop-color="#D62222"/>
+    </linearGradient>
+    <linearGradient id="pinFire" x1="0" y1="-80" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF9F6B"/><stop offset="0.5" stop-color="#FF5A45"/><stop offset="1" stop-color="#E12A2A"/>
+    </linearGradient>
+    <linearGradient id="pinAmber" x1="0" y1="-80" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFDD82"/><stop offset="0.5" stop-color="#FDB022"/><stop offset="1" stop-color="#E8890C"/>
+    </linearGradient>
+    <linearGradient id="pinTeal" x1="0" y1="-80" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8FF3E0"/><stop offset="0.5" stop-color="#33D6E6"/><stop offset="1" stop-color="#159FCB"/>
+    </linearGradient>
+    <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
+      <feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="pinShadow" x="-60%" y="-40%" width="220%" height="200%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="radar"><circle cx="256" cy="256" r="190"/></clipPath>
+  </defs>
+
+  <!-- app-icon background -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bg)"/>
+  <rect x="16.5" y="16.5" width="479" height="479" rx="115.5" fill="none" stroke="#35E0C1" stroke-opacity="0.14"/>
+
+  <!-- radar disc + faint street grid + river (clipped) -->
+  <circle cx="256" cy="256" r="190" fill="url(#disc)"/>
+  <g clip-path="url(#radar)">
+    <g stroke="#35E0C1" stroke-opacity="0.10" stroke-width="3" fill="none">
+      <path d="M95 140 L470 205 M70 250 L450 315 M60 355 L420 420 M150 70 L205 460 M275 60 L330 462 M385 90 L430 430"/>
+    </g>
+    <path d="M120 470 C 210 360 250 300 235 210 C 225 150 250 100 300 70" fill="none" stroke="#4FA9FF" stroke-opacity="0.22" stroke-width="10" stroke-linecap="round"/>
+    <path d="M300 452 L322 452 M150 92 L172 92" stroke="#35E0C1" stroke-opacity="0.12" stroke-width="3"/>
+  </g>
+
+  <!-- concentric rings + crosshair -->
+  <g fill="none" stroke="#35E0C1">
+    <circle cx="256" cy="256" r="190" stroke-opacity="0.9" stroke-width="6" filter="url(#glow)"/>
+    <circle cx="256" cy="256" r="142" stroke-opacity="0.22" stroke-width="2"/>
+    <circle cx="256" cy="256" r="94"  stroke-opacity="0.22" stroke-width="2"/>
+    <circle cx="256" cy="256" r="46"  stroke-opacity="0.24" stroke-width="2"/>
+    <path d="M66 256 H446 M256 66 V446" stroke-opacity="0.16" stroke-width="2"/>
+  </g>
+
+  <!-- sweep at its designed base position: broad glowing wedge + bright leading edge -->
+  <g clip-path="url(#radar)">
+    <path d="M256 256 L452 122 A190 190 0 0 1 452 256 Z" fill="url(#sweep)"/>
+    <path d="M256 256 L452 122" stroke="#9BFFEE" stroke-width="3" stroke-opacity="0.95" filter="url(#glow)"/>
+  </g>
+
+  <!-- center -->
+  <circle cx="256" cy="256" r="10" fill="#9BFFEE" filter="url(#glow)"/>
+  <circle cx="256" cy="256" r="4.5" fill="#0a141d"/>
+
+  <!-- blips: flattened to a static visible opacity (animation removed for rasterization) -->
+  <g>
+    <circle cx="300" cy="150" r="5"   fill="#FF6B6B" opacity="0.7"/>
+    <circle cx="362" cy="320" r="5"   fill="#FFC24A" opacity="0.7"/>
+    <circle cx="205" cy="360" r="4.5" fill="#35E0C1" opacity="0.7"/>
+    <circle cx="332" cy="248" r="4"   fill="#35E0C1" opacity="0.7"/>
+    <circle cx="160" cy="235" r="4.5" fill="#35E0C1" opacity="0.7"/>
+    <circle cx="388" cy="205" r="4"   fill="#35E0C1" opacity="0.7"/>
+    <circle cx="275" cy="392" r="4.5" fill="#35E0C1" opacity="0.7"/>
+    <circle cx="350" cy="130" r="3.5" fill="#FF6B6B" opacity="0.7"/>
+    <circle cx="185" cy="300" r="4"   fill="#35E0C1" opacity="0.7"/>
+    <circle cx="400" cy="285" r="3.5" fill="#FFC24A" opacity="0.7"/>
+  </g>
+
+  <!-- ===== PINS (bold filled glyphs + gloss + shadow) ===== -->
+  <!-- FIRE (top-left) -->
+  <g transform="translate(185,208)" filter="url(#pinShadow)">
+    <ellipse cx="0" cy="9" rx="18" ry="5" fill="#000" fill-opacity="0.25"/>
+    <path d="M0 0 C -16 -22 -30 -34 -30 -50 A30 30 0 1 1 30 -50 C30 -34 16 -22 0 0 Z" fill="url(#pinFire)"/>
+    <ellipse cx="-8" cy="-60" rx="9" ry="6" fill="#fff" fill-opacity="0.28"/>
+    <g transform="translate(0,-50) scale(1.32) translate(-12,-12)" fill="#fff">
+      <path d="M12 2.5c1.1 3.4 4.7 4.8 4.7 9A4.7 4.7 0 0 1 12 16a4.7 4.7 0 0 1-4.7-4.5c0-1.2.4-2.3 1.2-3.2.3 1.5 1.4 2.4 2.6 2.4C12.8 8.4 12 5.9 12 2.5Z"/>
+    </g>
+  </g>
+  <!-- ACCIDENT (mid-left) -->
+  <g transform="translate(180,338)" filter="url(#pinShadow)">
+    <ellipse cx="0" cy="9" rx="18" ry="5" fill="#000" fill-opacity="0.25"/>
+    <path d="M0 0 C -16 -22 -30 -34 -30 -50 A30 30 0 1 1 30 -50 C30 -34 16 -22 0 0 Z" fill="url(#pinRed)"/>
+    <ellipse cx="-8" cy="-60" rx="9" ry="6" fill="#fff" fill-opacity="0.28"/>
+    <g transform="translate(0,-50) scale(1.32) translate(-12,-12)" fill="#fff">
+      <path d="M4.4 13.6 5.9 10a2.2 2.2 0 0 1 2-1.3h8.2a2.2 2.2 0 0 1 2 1.3l1.5 3.6c.2.3.3.7.3 1.1v2.6c0 .6-.5 1-1 1h-1.1c-.6 0-1-.5-1-1v-.6H7.2v.6c0 .6-.5 1-1 1H5c-.6 0-1-.5-1-1v-2.6c0-.4.1-.8.4-1.1Z"/>
+      <circle cx="7.4" cy="14.4" r="1.3" fill="#E23"/><circle cx="16.6" cy="14.4" r="1.3" fill="#E23"/>
+    </g>
+  </g>
+  <!-- ROAD CLOSURE (mid-right) -->
+  <g transform="translate(350,338)" filter="url(#pinShadow)">
+    <ellipse cx="0" cy="9" rx="18" ry="5" fill="#000" fill-opacity="0.25"/>
+    <path d="M0 0 C -16 -22 -30 -34 -30 -50 A30 30 0 1 1 30 -50 C30 -34 16 -22 0 0 Z" fill="url(#pinAmber)"/>
+    <ellipse cx="-8" cy="-60" rx="9" ry="6" fill="#fff" fill-opacity="0.30"/>
+    <g transform="translate(0,-50) scale(1.32) translate(-12,-12)">
+      <rect x="4" y="8.5" width="16" height="4.6" rx="1.2" fill="#fff"/>
+      <path d="M6.5 13.1V19M17.5 13.1V19" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M6.2 8.8 9 12.8 M11 8.8 13.8 12.8 M15.8 8.8 18.6 12.8" stroke="#E8890C" stroke-width="2"/>
+    </g>
+  </g>
+  <!-- FLOOD (bottom) -->
+  <g transform="translate(295,406)" filter="url(#pinShadow)">
+    <ellipse cx="0" cy="9" rx="18" ry="5" fill="#000" fill-opacity="0.25"/>
+    <path d="M0 0 C -16 -22 -30 -34 -30 -50 A30 30 0 1 1 30 -50 C30 -34 16 -22 0 0 Z" fill="url(#pinTeal)"/>
+    <ellipse cx="-8" cy="-60" rx="9" ry="6" fill="#fff" fill-opacity="0.30"/>
+    <g transform="translate(0,-50) scale(1.32) translate(-12,-12)">
+      <path d="M4.4 11.6 5.9 8.2a2.2 2.2 0 0 1 2-1.3h8.2a2.2 2.2 0 0 1 2 1.3l1.5 3.4c.2.3.3.7.3 1.1v1.8H4v-1.8c0-.4.1-.8.4-1.1Z" fill="#fff"/>
+      <path d="M3 17.4c1.4-1.4 2.8-1.4 4.2 0s2.8 1.4 4.2 0 2.8-1.4 4.2 0 2.8 1.4 4.2 0" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>
