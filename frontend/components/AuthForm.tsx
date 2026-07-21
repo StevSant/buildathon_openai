@@ -264,7 +264,9 @@ export default function AuthForm() {
           <span aria-hidden="true" className="mt-px text-[13px] text-muted">
             ⊙
           </span>
-          Tu cédula nunca se guarda: solo un hash. No se comparte ni se muestra a nadie.
+          Tu cédula nunca se guarda: solo un hash. No se comparte ni se muestra a nadie. Tus
+          reportes son anónimos para otros usuarios; si una cuenta publica reportes falsos, se
+          deshabilita y esa cédula no puede volver a registrarse.
         </p>
       )}
 
