@@ -27,6 +27,7 @@ export default function AuthForm() {
   const [password, setPassword] = useState("");
   const [cedula, setCedula] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -169,16 +170,51 @@ export default function AuthForm() {
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
             Contraseña
           </span>
-          <input
-            autoComplete={mode === "signup" ? "new-password" : "current-password"}
-            type="password"
-            required
-            minLength={6}
-            className="h-[52px] rounded-xl border border-line bg-panel px-3.5 text-[15px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="••••••••••"
-          />
+          <span className="relative">
+            <input
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              type={isPasswordVisible ? "text" : "password"}
+              required
+              minLength={6}
+              className="h-[52px] w-full rounded-xl border border-line bg-panel px-3.5 pr-12 text-[15px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="••••••••••"
+            />
+            <button
+              type="button"
+              aria-label={isPasswordVisible ? "Ocultar contraseña" : "Mostrar contraseña"}
+              aria-pressed={isPasswordVisible}
+              onClick={() => setIsPasswordVisible((visible) => !visible)}
+              className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-muted transition-colors hover:text-ink focus:outline-none focus-visible:text-accent"
+            >
+              <svg
+                width={20}
+                height={20}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.9}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                {isPasswordVisible ? (
+                  <>
+                    <path d="m3 3 18 18" />
+                    <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+                    <path d="M9.9 5.1A10.8 10.8 0 0 1 12 4.9c5.2 0 8.8 4.3 9.8 7.1a.9.9 0 0 1 0 .6 13.8 13.8 0 0 1-4.1 5.2" />
+                    <path d="M6.2 6.2A13.6 13.6 0 0 0 2.2 11.9a.9.9 0 0 0 0 .6c1 2.8 4.6 7.1 9.8 7.1 1.1 0 2.1-.2 3.1-.6" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M2.2 12a.9.9 0 0 1 0-.6c1-2.8 4.6-7.1 9.8-7.1s8.8 4.3 9.8 7.1a.9.9 0 0 1 0 .6c-1 2.8-4.6 7.1-9.8 7.1S3.2 14.8 2.2 12Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </>
+                )}
+              </svg>
+            </button>
+          </span>
         </label>
 
         {mode === "signup" && (
@@ -236,6 +272,7 @@ export default function AuthForm() {
         type="button"
         onClick={() => {
           setMode(mode === "signup" ? "signin" : "signup");
+          setIsPasswordVisible(false);
           setError(null);
         }}
         className="mt-auto pt-5 text-center text-[12px] font-semibold text-accent"
