@@ -25,12 +25,16 @@ export class RegistryApiVerifier implements IdentityVerifier {
       throw new Error(`Identity provider responded ${response.status}`);
     }
 
-    // TODO: map the provider's real response shape.
-    const data = (await response.json()) as { valid?: boolean; reason?: string };
+    const data = (await response.json()) as { valid?: unknown; reason?: unknown };
+    if (typeof data.valid !== 'boolean') {
+      // Unknown shape → don't guess; fall back to the algorithmic verifier.
+      throw new Error('Identity provider returned an unrecognized body');
+    }
+
     return {
-      valid: Boolean(data.valid),
+      valid: data.valid,
       method: 'registry',
-      reason: data.reason,
+      reason: typeof data.reason === 'string' ? data.reason : undefined,
     };
   }
 }

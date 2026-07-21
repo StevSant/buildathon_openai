@@ -20,13 +20,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export class SupabaseIncidentRepository implements IncidentRepository {
   constructor(
     private readonly client: SupabaseClient,
-    // Env-injected bounds/thresholds (MAX_RADIUS_METERS, CONFIRM_THRESHOLD,
-    // DISPUTE_THRESHOLD). Omitted values fall back to the SQL defaults.
-    private readonly options: {
-      maxRadiusMeters?: number;
-      confirmThreshold?: number;
-      disputeThreshold?: number;
-    } = {},
+    // Env-injected query bound (MAX_RADIUS_METERS). Community-vote thresholds are
+    // private to Postgres so direct clients cannot lower them to forge incident state.
+    private readonly options: { maxRadiusMeters?: number } = {},
   ) {}
 
   async findNearby(input: {
@@ -79,7 +75,6 @@ export class SupabaseIncidentRepository implements IncidentRepository {
       severity: clampSeverity(row.severity),
       status: row.status,
       confirmations: row.confirmations,
-      reporter_name: row.reporter_name ?? null,
       reporter_verified: Boolean(row.reporter_verified),
       created_at: row.created_at,
       lng: row.lng,
@@ -145,17 +140,10 @@ export class SupabaseIncidentRepository implements IncidentRepository {
     kind: ConfirmationKind,
   ): Promise<{ id: string; confirmations: number; status: IncidentStatus }> {
     // The restricted privileged RPC derives identity from auth.uid(), validates the caller,
-    // and never trusts a user id from arguments. Its second arg is `kind` (confirm | dispute);
-    // thresholds are only sent when injected so the SQL defaults stay authoritative.
+    // and never trusts a user id or thresholds from arguments.
     const { data, error } = await this.client.rpc('confirm_incident', {
       target_id: id,
       kind,
-      ...(this.options.confirmThreshold != null
-        ? { confirm_threshold: this.options.confirmThreshold }
-        : {}),
-      ...(this.options.disputeThreshold != null
-        ? { dispute_threshold: this.options.disputeThreshold }
-        : {}),
     });
     if (error) throw new Error(error.message);
 

@@ -40,8 +40,9 @@ English unless it is demo or pitch material.
 
 Regression and security contract tests live in `tests/` and run with Node's built-in
 test runner. Every change should pass `npm test` and `npm run typecheck`; frontend
-changes should also pass lint and `npm run build`. Add focused tests for non-trivial
-behavior and name them after the behavior under test.
+changes should also pass lint and `npm run build`. For time efficiency, do not add new
+automated tests unless the user explicitly requests them; verify with the existing suite
+and the plan's focused runtime or static checks instead.
 
 ## Commit & Pull Request Guidelines
 

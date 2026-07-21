@@ -55,13 +55,15 @@ export class OpenAIVisionAnalyzer implements IncidentAnalyzer {
       },
     });
 
-    // TODO: confirm the structured-output accessor for the installed SDK version.
-    const parsed = JSON.parse(response.output_text) as {
+    const text = response.output_text;
+    if (!text) {
+      throw new Error('El modelo no devolvió un análisis (respuesta vacía).');
+    }
+    return JSON.parse(text) as {
       category: Category;
       severity: number;
       title: string;
       description: string;
     };
-    return parsed;
   }
 }

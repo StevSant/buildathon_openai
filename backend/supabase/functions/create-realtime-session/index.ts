@@ -32,7 +32,10 @@ Deno.serve(async (req) => {
     });
 
     const createAgentSession = makeCreateAgentSession({ sessions });
-    const result = await createAgentSession({ personaId });
+    const result = await createAgentSession({
+      personaId,
+      context: typeof body.context === "object" && body.context ? body.context : undefined,
+    });
 
     // The factory returns { clientSecret, expiresAt }; the client also needs the model id
     // to open the WebRTC connection, and CONTRACT §4 includes the configured voice.

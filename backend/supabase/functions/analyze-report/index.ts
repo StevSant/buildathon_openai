@@ -11,9 +11,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const env = getEnv();
-    await userFromJwt(req); // authorize (user id isn't needed by the analyze use-case)
-    // CONTRACT §4: the request body is { photo_path } (snake_case).
-    const { photo_path: photoPath } = await req.json();
+    await userFromJwt(req); // authorize; identity not needed further here
+    const { photo_path } = await req.json();
+    if (typeof photo_path !== "string" || photo_path.length === 0) {
+      return Response.json({ error: "photo_path requerido" }, { status: 400, headers: corsHeaders });
+    }
 
     const analyzer = env.openaiApiKey
       ? new OpenAIVisionAnalyzer(
@@ -23,14 +25,13 @@ Deno.serve(async (req) => {
       : new FakeAnalyzer();
 
     // The report-photos bucket is public-read for the demo, so build the URL to fetch.
-    const imageUrl = `${env.supabaseUrl}/storage/v1/object/public/report-photos/${photoPath}`;
+    const imageUrl = `${env.supabaseUrl}/storage/v1/object/public/report-photos/${photo_path}`;
 
     const analyzeReport = makeAnalyzeReport({ analyzer });
     const result = await analyzeReport({ imageUrl });
 
     return Response.json(result, { headers: corsHeaders });
   } catch (err) {
-    // CONTRACT §4: non-2xx responses always use the { error } envelope.
     const message = err instanceof Error ? err.message : "error";
     const status = message === "unauthorized" ? 401 : 400;
     return Response.json({ error: message }, { status, headers: corsHeaders });

@@ -49,6 +49,7 @@ create table public.profiles (
   verified            boolean not null default false,
   verification_method text check (verification_method in ('registry','algorithmic')),
   trust_score         integer not null default 0,
+  disabled_at         timestamptz,                 -- non-null means disabled; row/hash are retained (ADR-020)
   created_at          timestamptz not null default now()
 );
 
@@ -92,6 +93,22 @@ alter table public.profiles                enable row level security;
 alter table public.incidents               enable row level security;
 alter table public.incident_confirmations  enable row level security;
 
+create or replace function public.is_active_profile()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select not exists (
+    select 1 from public.profiles p
+    where p.id = (select auth.uid()) and p.disabled_at is not null
+  );
+$$;
+
+revoke all on function public.is_active_profile() from public, anon;
+grant execute on function public.is_active_profile() to authenticated;
+
 -- profiles: a user sees only their own row; only display_name is client-editable
 create policy "own profile - select" on public.profiles
   for select to authenticated using ((select auth.uid()) = id);
@@ -108,7 +125,17 @@ create policy "incidents - read active" on public.incidents
 -- incidents: a user may insert only as themselves
 create policy "incidents - insert own" on public.incidents
   for insert to authenticated
-  with check (reporter_id = (select auth.uid()));
+  with check (
+    reporter_id = (select auth.uid())
+    and (select public.is_active_profile())
+  );
+
+create policy "confirmations - insert own" on public.incident_confirmations
+  for insert to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and (select public.is_active_profile())
+  );
 
 -- Direct confirmation-table access and incident updates are intentionally absent.
 
@@ -117,7 +144,9 @@ grant select on public.profiles to authenticated;
 grant update (display_name) on public.profiles to authenticated;
 
 revoke all on public.incidents from anon, authenticated;
-grant select, insert on public.incidents to authenticated;
+grant select on public.incidents to authenticated;
+grant insert (reporter_id, title, description, category, severity, location, photo_path, expires_at)
+  on public.incidents to authenticated;
 
 revoke all on public.incident_confirmations from anon, authenticated;
 ```
@@ -176,7 +205,7 @@ as $$
 $$;
 ```
 
-### `get_incident_details` — one incident, no reporter PII
+### `get_incident_details` — one active incident, anonymous to users
 ```sql
 create or replace function public.get_incident_details(target_id uuid)
 returns table (
@@ -187,19 +216,17 @@ returns table (
   severity      integer,
   status        text,
   confirmations integer,
-  reporter_name text,        -- display_name only; never cédula/email
   reporter_verified boolean,
   created_at    timestamptz,
   lng           double precision,
   lat           double precision
 )
 language sql
-security invoker
+security definer
 set search_path = ''
 as $$
   select
     i.id, i.title, i.description, i.category, i.severity, i.status, i.confirmations,
-    p.display_name as reporter_name,
     coalesce(p.verified, false) as reporter_verified,
     i.created_at,
     extensions.st_x(i.location::extensions.geometry) as lng,
@@ -207,6 +234,9 @@ as $$
   from public.incidents i
   left join public.profiles p on p.id = i.reporter_id
   where i.id = target_id
+    and (select auth.uid()) is not null
+    and i.status <> 'resolved'
+    and (i.expires_at is null or i.expires_at > now())
   limit 1;
 $$;
 ```
@@ -217,14 +247,12 @@ Takes a `kind` argument. A user has **one** vote per incident, switchable betwee
 `incidents.confirmations` counts `confirm` votes only; the dispute count stays derived.
 Status rules mirror `core/domain/next-incident-status.ts`: `resolved` is terminal, a dispute
 at threshold wins over a confirmation at threshold, and below both thresholds the incident
-returns to `provisional`. Thresholds are injectable per call (defaults 3; the agent-tools
-composition root passes `CONFIRM_THRESHOLD` / `DISPUTE_THRESHOLD` from env).
+returns to `provisional`. The public RPC exposes only the frozen two-argument contract;
+its thresholds stay private so a direct client cannot lower them to forge status.
 ```sql
 create or replace function public.confirm_incident(
   target_id uuid,
-  kind      text default 'confirm',
-  confirm_threshold integer default 3,
-  dispute_threshold integer default 3
+  kind      text default 'confirm'
 )
 returns table (id uuid, confirmations integer, status text)
 language plpgsql
@@ -232,9 +260,11 @@ security definer
 set search_path = ''
 as $$
 declare
-  uid       uuid := (select auth.uid());
-  n_confirm integer;
-  n_dispute integer;
+  uid                    uuid := (select auth.uid());
+  required_confirmations constant integer := 3;
+  required_disputes      constant integer := 3;
+  n_confirm              integer;
+  n_dispute              integer;
 begin
   if uid is null then
     raise exception 'not authenticated';
@@ -242,8 +272,8 @@ begin
   if kind not in ('confirm','dispute') then
     raise exception 'invalid kind: %', kind;
   end if;
-  if confirm_threshold < 1 or dispute_threshold < 1 then
-    raise exception 'thresholds must be positive';
+  if not public.is_active_profile() then
+    raise exception 'account disabled' using errcode = '42501';
   end if;
 
   perform 1 from public.incidents i where i.id = target_id for update;
@@ -266,8 +296,8 @@ begin
      set confirmations = n_confirm,
          status = case
                     when i.status = 'resolved' then 'resolved'
-                    when n_dispute >= dispute_threshold then 'disputed'
-                    when n_confirm >= confirm_threshold then 'confirmed'
+                    when n_dispute >= required_disputes then 'disputed'
+                    when n_confirm >= required_confirmations then 'confirmed'
                     else 'provisional'
                   end
    where i.id = target_id;
@@ -276,8 +306,8 @@ begin
 end;
 $$;
 
-revoke all on function public.confirm_incident(uuid, text, integer, integer) from public, anon;
-grant execute on function public.confirm_incident(uuid, text, integer, integer) to authenticated;
+revoke all on function public.confirm_incident(uuid, text) from public, anon;
+grant execute on function public.confirm_incident(uuid, text) to authenticated;
 
 -- Functions are not public-by-default API. Grant only the authenticated calls Pulso uses.
 revoke all on function public.get_nearby_incidents(double precision, double precision, integer, text)
