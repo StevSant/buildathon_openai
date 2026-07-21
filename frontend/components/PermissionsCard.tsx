@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Icon from "./Icon";
 
 type PermissionState = "unknown" | "granted" | "denied";
 
@@ -52,75 +53,62 @@ export default function PermissionsCard() {
     }
   }
 
-  const locationAction =
-    locationState === "granted" ? (
-      <span className="rounded-md bg-[color-mix(in_srgb,var(--ok)_14%,transparent)] px-1.5 py-1 text-[10px] font-semibold uppercase text-ok">
-        Concedido
-      </span>
-    ) : (
-      <button
-        type="button"
-        onClick={() => void requestLocation()}
-        className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${
-          locationState === "denied"
-            ? "bg-[color-mix(in_srgb,var(--sev-fire)_14%,transparent)] text-sev-fire"
-            : "bg-accent text-accent-ink"
-        }`}
-      >
-        {locationState === "denied" ? "Reintentar" : "Permitir"}
-      </button>
-    );
+  function action(state: PermissionState, request: () => void) {
+    if (state === "granted") {
+      return (
+        <span className="badge-ok">
+          <Icon name="ic-check" style={{ width: 14, height: 14, strokeWidth: 2.3 }} />
+          Activada
+        </span>
+      );
+    }
 
-  const microphoneAction =
-    microphoneState === "granted" ? (
-      <span className="rounded-md bg-[color-mix(in_srgb,var(--ok)_14%,transparent)] px-1.5 py-1 text-[10px] font-semibold uppercase text-ok">
-        Concedido
-      </span>
-    ) : (
+    return (
       <button
         type="button"
-        onClick={() => void requestMicrophone()}
-        className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${
-          microphoneState === "denied"
-            ? "bg-[color-mix(in_srgb,var(--sev-fire)_14%,transparent)] text-sev-fire"
-            : "bg-accent text-accent-ink"
-        }`}
+        onClick={request}
+        className={state === "denied" ? "btn ghost sm" : "btn primary sm"}
+        style={{ width: "auto", flex: "none", ...(state === "denied" ? { color: "var(--sev-fire)" } : {}) }}
       >
-        {microphoneState === "denied" ? "Reintentar" : "Permitir"}
+        {state === "denied" ? "Reintentar" : "Permitir"}
       </button>
     );
+  }
 
   return (
-    <section className="rounded-[14px] border border-line bg-panel" aria-labelledby="permissions-title">
-      <h2
-        id="permissions-title"
-        className="px-3.5 pb-1.5 pt-3 text-[10px] font-semibold uppercase tracking-widest text-faint"
-      >
-        Permisos del dispositivo
-      </h2>
-      <div className="flex items-center gap-3 border-t border-line px-3.5 py-3">
-        <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] bg-panel-3 text-[15px]">
-          &#128205;
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold">Ubicación · obligatoria</p>
-          <p className="mt-0.5 text-[11px] leading-4 text-muted">
-            Para incidentes cercanos y enviar tu ubicación en un SOS.
-          </p>
-        </div>
-        {locationAction}
+    <section className="group" aria-labelledby="permissions-title">
+      <div className="gl" id="permissions-title">
+        Permisos
       </div>
-      <div className="flex items-center gap-3 border-t border-line px-3.5 py-3">
-        <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] bg-panel-3 text-[15px]">
-          &#127908;
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold">Micrófono · opcional</p>
-          <p className="mt-0.5 text-[11px] leading-4 text-muted">
-            Solo para hablar con el asistente de voz Cerca.
-          </p>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          padding: "4px 13px 13px",
+        }}
+      >
+        <div className="perm-row" style={{ alignItems: "center" }}>
+          <span className="pi">
+            <Icon name="ic-target" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pt">Ubicación · obligatoria</div>
+            <div className="pd">Para incidentes cercanos y enviar tu ubicación en un SOS.</div>
+          </div>
+          {action(locationState, () => void requestLocation())}
         </div>
-        {microphoneAction}
+
+        <div className="perm-row" style={{ alignItems: "center" }}>
+          <span className="pi">
+            <Icon name="ic-mic" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pt">Micrófono · opcional</div>
+            <div className="pd">Solo para hablar con el asistente de voz Cerca.</div>
+          </div>
+          {action(microphoneState, () => void requestMicrophone())}
+        </div>
       </div>
     </section>
   );

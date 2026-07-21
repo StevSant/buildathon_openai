@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Icon from "./Icon";
 import { supabase } from "@/lib";
 
 interface EmergencyContact {
@@ -88,69 +89,89 @@ export default function EmergencyContactsForm() {
   }
 
   return (
-    <section className="rounded-[14px] border border-line bg-panel" aria-labelledby="emergency-contacts-title">
-      <h2
-        id="emergency-contacts-title"
-        className="px-3.5 pb-1.5 pt-3 text-[10px] font-semibold uppercase tracking-widest text-faint"
-      >
+    <section className="group" aria-labelledby="emergency-contacts-title">
+      <div className="gl" id="emergency-contacts-title">
         Contactos de emergencia
-      </h2>
+      </div>
 
-      {contacts.map((contact) => {
-        const status =
-          contact.opt_in_status === "accepted"
-            ? { label: "Aceptado", color: "var(--ok)" }
-            : contact.opt_in_status === "declined"
-              ? { label: "Rechazado", color: "var(--sev-fire)" }
-              : { label: "Pendiente", color: "var(--sev-road)" };
+      {contacts.map((contact, index) => {
         const displayName = contact.display_name ?? contact.phone_e164;
+        const statusClass =
+          contact.opt_in_status === "accepted"
+            ? "status st-acc"
+            : contact.opt_in_status === "declined"
+              ? "status"
+              : "status st-pend";
+        const statusLabel =
+          contact.opt_in_status === "accepted"
+            ? "Aceptado"
+            : contact.opt_in_status === "declined"
+              ? "Rechazado"
+              : "Pendiente";
 
         return (
-          <div key={contact.id} className="flex items-center gap-3 border-t border-line px-3.5 py-3">
-            <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] bg-panel-3 font-mono text-[11px] font-extrabold text-accent">
-              {displayName.slice(0, 2).toUpperCase()}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-semibold">{displayName}</div>
-              <div className="font-mono text-[11px] text-muted">{contact.phone_e164}</div>
+          <div key={contact.id} className="crow" style={index === 0 ? { borderTop: 0 } : undefined}>
+            <span className="cav">{displayName.slice(0, 2).toUpperCase()}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="cn">{displayName}</div>
+              <div className="cp">{contact.phone_e164}</div>
             </div>
             <span
-              className="rounded-md px-1.5 py-1 text-[10px] font-semibold uppercase"
-              style={{
-                color: status.color,
-                background: `color-mix(in srgb, ${status.color} 14%, transparent)`,
-              }}
+              className={statusClass}
+              style={
+                contact.opt_in_status === "declined"
+                  ? {
+                      color: "var(--sev-fire)",
+                      background: "color-mix(in srgb, var(--sev-fire) 14%, transparent)",
+                    }
+                  : undefined
+              }
             >
-              {status.label}
+              {statusLabel}
             </span>
           </div>
         );
       })}
 
-      <div className="flex flex-col gap-2 border-t border-line px-3.5 py-3">
-        <input
-          className="rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:border-accent"
-          placeholder="Nombre (p. ej. Mamá)"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <input
-          className="rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-sm text-ink outline-none placeholder:text-faint focus:border-accent"
-          placeholder="+593991234567"
-          inputMode="tel"
-          value={phone}
-          onChange={(event) => setPhone(event.target.value)}
-        />
-        {error ? <p className="text-[11px] text-sev-fire">{error}</p> : null}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void addContact()}
-          className="flex items-center gap-2 self-start text-[13px] font-semibold text-accent disabled:opacity-60"
-        >
-          + Agregar contacto
-        </button>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          padding: "11px 13px",
+          borderTop: contacts.length ? "1px solid var(--line)" : 0,
+        }}
+      >
+        <div className="input">
+          <input
+            placeholder="Nombre (p. ej. Mamá)"
+            aria-label="Nombre del contacto"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+        <div className="input mono">
+          <input
+            placeholder="+593991234567"
+            inputMode="tel"
+            aria-label="Número del contacto"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+          />
+        </div>
+        {error ? <p style={{ margin: 0, fontSize: 11, color: "var(--sev-fire)" }}>{error}</p> : null}
       </div>
+
+      <button
+        type="button"
+        className="addrow"
+        style={{ borderTop: 0, opacity: busy ? 0.6 : 1 }}
+        disabled={busy}
+        onClick={() => void addContact()}
+      >
+        <Icon name="ic-plus" />
+        Agregar contacto
+      </button>
     </section>
   );
 }

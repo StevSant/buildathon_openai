@@ -10,6 +10,7 @@ export {
   confirmIncident,
   subscribeToIncidents,
 } from "./incidents";
+export { haversineMeters } from "./distance";
 export { REALTIME_TOOLS } from "./realtime-tools";
 export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";
