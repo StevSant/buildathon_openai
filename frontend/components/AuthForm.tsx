@@ -1,61 +1,109 @@
 "use client";
 
 import { useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, config } from "@/lib";
+import type { VerificationMethod } from "@pulso/core";
+import { config, supabase } from "@/lib";
 
 type Mode = "signup" | "signin";
 
-// Sign-up / sign-in with email + password + cédula. On sign-up we create the auth user,
-// then call verify-identity (with the JWT + cédula) to validate and persist the profile.
-// The raw cédula only lives in this form's state and the request body — never stored raw.
+type VerifyIdentityResponse = {
+  verified: boolean;
+  method: VerificationMethod;
+  reason?: string;
+};
+
+// The raw cédula only exists in the form state and verification request body; it is
+// never stored in the browser.
 export default function AuthForm() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("signup");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [cedula, setCedula] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function verifyIdentity() {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) throw new Error("No se pudo iniciar sesión");
-    const res = await fetch(`${config.functionsUrl}/verify-identity`, {
+  async function verifyIdentity(
+    accessToken: string,
+  ): Promise<VerifyIdentityResponse> {
+    const response = await fetch(`${config.functionsUrl}/verify-identity`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ cedula }),
     });
-    if (!res.ok) {
-      // CONTRACT §4: failures come back as { error }.
-      const body = await res.json().catch(() => ({}));
+    const body = (await response.json().catch(() => ({}))) as Partial<
+      VerifyIdentityResponse & { error: string }
+    >;
+
+    if (!response.ok) {
       throw new Error(body.error ?? "No pudimos verificar tu cédula");
     }
+
+    return {
+      verified: Boolean(body.verified),
+      method: body.method ?? "algorithmic",
+      reason: body.reason,
+    };
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSignUp(): Promise<void> {
+    if (!/^\d{10}$/.test(cedula)) {
+      throw new Error("La cédula debe tener 10 dígitos");
+    }
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+    if (signUpError) throw signUpError;
+
+    const session = data.session;
+    const userId = data.user?.id;
+    if (!session || !userId) {
+      throw new Error("No se pudo iniciar sesión tras el registro");
+    }
+
+    const result = await verifyIdentity(session.access_token);
+    if (!result.verified) {
+      throw new Error(result.reason ?? "Tu cédula no pudo ser verificada");
+    }
+
+    const { error: profileError } = await supabase.from("profiles").upsert({
+      id: userId,
+      display_name: displayName.trim() || null,
+      verified: result.verified,
+      verification_method: result.method,
+    });
+    if (profileError) throw profileError;
+  }
+
+  async function handleSignIn(): Promise<void> {
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (signInError) throw signInError;
+  }
+
+  async function onSubmit(event: FormEvent): Promise<void> {
+    event.preventDefault();
     setBusy(true);
     setError(null);
     try {
       if (mode === "signup") {
-        const { error: signUpError } = await supabase.auth.signUp({ email, password });
-        if (signUpError) throw signUpError;
-        await verifyIdentity();
+        await handleSignUp();
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (signInError) throw signInError;
+        await handleSignIn();
       }
       router.replace("/");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Algo salió mal");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Algo salió mal");
     } finally {
       setBusy(false);
     }
@@ -70,6 +118,20 @@ export default function AuthForm() {
         Cada reporte lleva una identidad real. Sin cuentas falsas.
       </p>
 
+      {mode === "signup" && (
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">
+            Nombre a mostrar
+          </span>
+          <input
+            className="rounded-xl border border-line bg-panel px-3 py-3 text-sm text-ink outline-none"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="María Torres"
+          />
+        </label>
+      )}
+
       <label className="flex flex-col gap-1.5">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">
           Correo
@@ -79,7 +141,7 @@ export default function AuthForm() {
           required
           className="rounded-xl border border-line bg-panel px-3 py-3 text-sm text-ink outline-none"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(event) => setEmail(event.target.value)}
           placeholder="maria.torres@correo.ec"
         />
       </label>
@@ -93,7 +155,7 @@ export default function AuthForm() {
           required
           className="rounded-xl border border-line bg-panel px-3 py-3 text-sm text-ink outline-none"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(event) => setPassword(event.target.value)}
           placeholder="••••••••"
         />
       </label>
@@ -106,9 +168,10 @@ export default function AuthForm() {
           <input
             inputMode="numeric"
             required
+            maxLength={10}
             className="rounded-xl border border-line bg-panel px-3 py-3 font-mono text-sm tracking-widest text-ink outline-none"
             value={cedula}
-            onChange={(e) => setCedula(e.target.value)}
+            onChange={(event) => setCedula(event.target.value)}
             placeholder="0102030405"
           />
         </label>
@@ -122,7 +185,7 @@ export default function AuthForm() {
         className="mt-1 flex w-full items-center justify-center rounded-[14px] bg-accent px-3 py-3 text-sm font-bold text-accent-ink disabled:opacity-60"
       >
         {busy
-          ? "Un momento…"
+          ? "Un momento..."
           : mode === "signup"
             ? "Crear cuenta verificada"
             : "Entrar"}
