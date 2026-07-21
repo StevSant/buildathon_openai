@@ -8,6 +8,7 @@ import { supabase } from "./supabase";
 //   - "toast"  → a discreet toast (relevant, but not urgent)
 // Thresholds come from config (env), never hardcoded.
 export type AlertTier = "sheet" | "toast";
+type NotificationSurface = "host" | "center";
 
 export function decideAlertTier(params: {
   severity: number;
@@ -21,10 +22,13 @@ export function decideAlertTier(params: {
 // Notifications deliberately own a channel separate from the map so either surface can
 // subscribe and clean up independently (Contract §3.4).
 export function subscribeToNotificationIncidents(
+  surface: NotificationSurface,
   onChange: () => void,
 ): RealtimeChannel {
+  const channelName = `incidents-notification-${surface}-${crypto.randomUUID()}`;
+
   return supabase
-    .channel("incidents-notifications")
+    .channel(channelName)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "incidents" },

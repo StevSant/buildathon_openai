@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NearbyIncident } from "@pulso/core";
 import {
   config,
   decideAlertTier,
   getNearbyIncidents,
+  supabase,
   subscribeToNotificationIncidents,
 } from "@/lib";
 
@@ -13,7 +14,7 @@ import {
 // has been dismissed. Its subscription intentionally uses the notifications-specific channel.
 export default function NotificationsPage() {
   const [rows, setRows] = useState<NearbyIncident[]>([]);
-  const [location, setLocation] = useState({
+  const location = useRef({
     lat: config.defaultLat,
     long: config.defaultLng,
   });
@@ -21,43 +22,38 @@ export default function NotificationsPage() {
   useEffect(() => {
     let active = true;
 
+    async function refresh(): Promise<void> {
+      try {
+        const data = await getNearbyIncidents(location.current);
+        if (active) setRows(data);
+      } catch {
+        if (active) setRows([]);
+      }
+    }
+
+    void refresh();
+    const channel = subscribeToNotificationIncidents(
+      "center",
+      () => void refresh(),
+    );
+
     navigator.geolocation?.getCurrentPosition(
-      (pos) => {
+      (position) => {
         if (!active) return;
-        setLocation({ lat: pos.coords.latitude, long: pos.coords.longitude });
+        location.current = {
+          lat: position.coords.latitude,
+          long: position.coords.longitude,
+        };
+        void refresh();
       },
       () => undefined,
     );
 
     return () => {
       active = false;
+      void supabase.removeChannel(channel);
     };
   }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    void getNearbyIncidents(location)
-      .then((data) => {
-        if (active) setRows(data);
-      })
-      .catch(() => {
-        if (active) setRows([]);
-      });
-
-    const channel = subscribeToNotificationIncidents(() => {
-      void getNearbyIncidents(location)
-        .then((data) => {
-          if (active) setRows(data);
-        })
-        .catch(() => undefined);
-    });
-
-    return () => {
-      active = false;
-      void channel.unsubscribe();
-    };
-  }, [location]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg px-3 pb-3 pt-3.5">

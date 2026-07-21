@@ -7,6 +7,7 @@ import {
   config,
   decideAlertTier,
   getNearbyIncidents,
+  supabase,
   subscribeToNotificationIncidents,
 } from "@/lib";
 import NotificationBottomSheet from "./NotificationBottomSheet";
@@ -77,12 +78,15 @@ export default function NotificationHost() {
   }, [showIncident]);
 
   useEffect(() => {
-    const channel = subscribeToNotificationIncidents(() => void refresh());
+    const channel = subscribeToNotificationIncidents(
+      "host",
+      () => void refresh(),
+    );
 
     if (!navigator.geolocation) {
       void refresh();
       return () => {
-        void channel.unsubscribe();
+        void supabase.removeChannel(channel);
       };
     }
 
@@ -98,7 +102,7 @@ export default function NotificationHost() {
     );
 
     return () => {
-      void channel.unsubscribe();
+      void supabase.removeChannel(channel);
     };
   }, [refresh]);
 
