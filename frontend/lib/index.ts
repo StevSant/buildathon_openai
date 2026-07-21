@@ -3,6 +3,7 @@
 export { config } from "./config";
 export type { AppConfig } from "./config";
 export { supabase } from "./supabase";
+export { getSession, onAuthChange, signOut } from "./auth";
 export {
   getNearbyIncidents,
   getIncidentDetails,
@@ -10,7 +11,7 @@ export {
   subscribeToIncidents,
 } from "./incidents";
 export { REALTIME_TOOLS } from "./realtime-tools";
-export { decideAlertTier } from "./notifications";
+export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";
 export { startRealtimeSession } from "./realtime-agent";
 export { readVerifiedIdentityResponse } from "./identity-verification";

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { CATEGORY_VALUES, clampSeverity } from "@pulso/core";
 import type { Category, Severity } from "@pulso/core";
-import { supabase, config } from "@/lib";
+import { config, supabase } from "@/lib";
 
-// Report flow: capture/upload a photo → upload to Storage → analyze-report (OpenAI vision)
-// proposes structured fields → user reviews/edits → publish (INSERT into incidents).
-// Supabase Realtime then broadcasts the new incident to every map.
+// Report flow: capture/upload a photo, request structured suggestions from analyze-report,
+// let the reporter review every value, then insert the incident under their JWT identity.
 
 interface AnalyzedFields {
   category: Category;
@@ -15,104 +16,161 @@ interface AnalyzedFields {
   description: string;
 }
 
-const CATEGORIES: { value: Category; label: string }[] = [
-  { value: "road_closure", label: "Cierre vial" },
-  { value: "accident", label: "Accidente" },
-  { value: "flood", label: "Inundación" },
-  { value: "fire", label: "Incendio" },
-  { value: "public_event", label: "Evento público" },
-  { value: "other", label: "Otro" },
-];
+interface ReportLocation {
+  lat: number;
+  lng: number;
+  isFallback: boolean;
+}
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  road_closure: "Cierre vial",
+  accident: "Accidente",
+  flood: "Inundación",
+  fire: "Incendio",
+  public_event: "Evento público",
+  other: "Otro",
+};
+
+type Phase = "idle" | "analyzing" | "ready" | "publishing";
 
 export default function ReportForm() {
+  const router = useRouter();
   const [photoPath, setPhotoPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [fields, setFields] = useState<AnalyzedFields | null>(null);
-  const [phase, setPhase] = useState<"idle" | "analyzing" | "ready" | "publishing">(
-    "idle",
-  );
+  const [location, setLocation] = useState<ReportLocation | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  async function onPickPhoto(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
     if (!file) return;
+
     setError(null);
+    setFields(null);
+    setLocation(null);
+    setPhotoPath(null);
     setPreview(URL.createObjectURL(file));
     setPhase("analyzing");
+
     try {
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData.user?.id;
       if (!uid) throw new Error("Sin sesión");
+
+      // The bucket path is deliberately relative: <auth.uid()>/<uuid>.jpg.
       const path = `${uid}/${crypto.randomUUID()}.jpg`;
-      const { error: upErr } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from("report-photos")
         .upload(path, file, { contentType: file.type });
-      if (upErr) throw upErr;
-      setPhotoPath(path);
+      if (uploadError) throw uploadError;
 
       const { data: sessionData } = await supabase.auth.getSession();
-      const res = await fetch(`${config.functionsUrl}/analyze-report`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionData.session?.access_token}`,
-        },
-        body: JSON.stringify({ photo_path: path }),
-      });
-      if (!res.ok) throw new Error(`analyze-report falló: ${res.status}`);
-      setFields((await res.json()) as AnalyzedFields);
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sin sesión");
+
+      const locate = async (): Promise<ReportLocation> => {
+        if (typeof navigator === "undefined" || !navigator.geolocation) {
+          return { lat: config.defaultLat, lng: config.defaultLng, isFallback: true };
+        }
+
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 10_000,
+            }),
+          );
+          return {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            isFallback: false,
+          };
+        } catch {
+          return { lat: config.defaultLat, lng: config.defaultLng, isFallback: true };
+        }
+      };
+
+      const [analysisResponse, resolvedLocation] = await Promise.all([
+        fetch(`${config.functionsUrl}/analyze-report`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ photo_path: path }),
+        }),
+        locate(),
+      ]);
+
+      if (!analysisResponse.ok) {
+        const body = (await analysisResponse.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? `No se pudo analizar la foto (${analysisResponse.status})`);
+      }
+
+      const analysis = (await analysisResponse.json()) as AnalyzedFields;
+      setPhotoPath(path);
+      setFields({ ...analysis, severity: clampSeverity(analysis.severity) });
+      setLocation(resolvedLocation);
       setPhase("ready");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos analizar la foto");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No pudimos analizar la foto");
       setPhase("idle");
     }
   }
 
   async function publish() {
-    if (!fields || !photoPath) return;
+    if (!fields || !photoPath || !location) return;
+
+    setError(null);
     setPhase("publishing");
+
     try {
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData.user?.id;
-      const position = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-        }),
-      );
-      // location as a PostGIS geography (EWKT, SRID 4326) — inserted under the user's own
-      // reporter_id (RLS enforces reporter_id = auth.uid()).
-      const point = `SRID=4326;POINT(${position.coords.longitude} ${position.coords.latitude})`;
-      const { error: insErr } = await supabase.from("incidents").insert({
+      if (!uid) throw new Error("Sin sesión");
+
+      // Geography points use longitude first and an explicit SRID per the frozen contract.
+      const { error: insertError } = await supabase.from("incidents").insert({
         reporter_id: uid,
         title: fields.title,
         description: fields.description,
         category: fields.category,
         severity: fields.severity,
-        location: point,
+        location: `SRID=4326;POINT(${location.lng} ${location.lat})`,
         photo_path: photoPath,
       });
-      if (insErr) throw insErr;
-      // Reset for the next report.
-      setFields(null);
-      setPhotoPath(null);
-      setPreview(null);
-      setPhase("idle");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos publicar el reporte");
+      if (insertError) throw insertError;
+
+      router.push("/");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No pudimos publicar el reporte");
       setPhase("ready");
     }
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3 px-4 py-4">
-      <h1 className="text-base font-bold">Nuevo reporte</h1>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
+      <header className="mb-3 flex items-center gap-3">
+        <button
+          type="button"
+          aria-label="Volver"
+          onClick={() => router.back()}
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-panel-2 text-xl leading-none text-muted"
+        >
+          ‹
+        </button>
+        <h1 className="text-[17px] font-extrabold tracking-[-0.02em] text-ink">Nuevo reporte</h1>
+      </header>
 
-      <label className="relative flex h-[118px] cursor-pointer items-center justify-center overflow-hidden rounded-[14px] border border-line bg-gradient-to-br from-[#2a3340] via-[#171f2a] to-[#20303b] text-[12px] text-muted">
+      <label className="relative flex h-[124px] cursor-pointer items-center justify-center overflow-hidden rounded-[14px] border border-line bg-[repeating-linear-gradient(-45deg,#17212d_0,#17212d_3px,#141c27_3px,#141c27_7px)] text-[12px] font-semibold text-ink">
         {preview ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={preview} alt="Tu foto" className="h-full w-full object-cover" />
         ) : (
-          <span>Toca para tomar o subir una foto</span>
+          <span className="rounded-md bg-[#17202bbb] px-2 py-1.5">▣&nbsp; Tu foto</span>
         )}
         <input
           type="file"
@@ -124,87 +182,127 @@ export default function ReportForm() {
       </label>
 
       {phase === "analyzing" && (
-        <p className="text-[12px] text-accent">La IA está analizando tu foto…</p>
+        <p className="mt-3 text-center text-[12px] font-semibold text-accent">
+          La IA está analizando tu foto…
+        </p>
       )}
-      {error && <p className="text-[12px] text-sev-fire">{error}</p>}
+      {error && <p className="mt-3 text-center text-[12px] text-sev-fire">{error}</p>}
 
-      {fields && (
-        <div className="flex flex-col gap-2.5 rounded-[14px] border border-line bg-panel p-3.5">
-          <div className="flex items-center gap-2 text-[12px] font-bold text-accent">
-            La IA analizó tu foto
-          </div>
+      {fields && location && (
+        <section className="mt-3 rounded-[14px] border border-line bg-panel px-3.5 py-3">
+          <p className="mb-3 text-[12px] font-bold text-accent">✧&nbsp; La IA analizó tu foto</p>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">
+          <label className="grid grid-cols-[84px_1fr] items-center gap-2 border-b border-line py-2">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
               Categoría
             </span>
             <select
               value={fields.category}
-              onChange={(e) =>
-                setFields({ ...fields, category: e.target.value as Category })
+              onChange={(event) =>
+                setFields({ ...fields, category: event.target.value as Category })
               }
-              className="rounded-lg border border-line bg-panel-2 px-2.5 py-2 text-[13.5px] text-ink"
+              className="justify-self-end rounded-full border-0 bg-[#ffad4d] px-3 py-1 text-[11px] font-bold text-[#251305] outline-none"
             >
-              {CATEGORIES.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
+              {CATEGORY_VALUES.map((value) => (
+                <option key={value} value={value}>
+                  {CATEGORY_LABELS[value]}
                 </option>
               ))}
             </select>
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">
+          <label className="grid grid-cols-[84px_1fr] items-center gap-2 border-b border-line py-2">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
               Severidad
             </span>
-            <input
-              type="range"
-              min={1}
-              max={5}
-              value={fields.severity}
-              onChange={(e) =>
-                setFields({ ...fields, severity: Number(e.target.value) as Severity })
-              }
-            />
+            <div className="justify-self-end">
+              <input
+                aria-label="Severidad"
+                type="range"
+                min={1}
+                max={5}
+                value={fields.severity}
+                onChange={(event) =>
+                  setFields({ ...fields, severity: clampSeverity(Number(event.target.value)) })
+                }
+                className="h-2 w-[112px] cursor-pointer accent-[#ff9f45]"
+              />
+            </div>
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">
+          <label className="grid grid-cols-[84px_1fr] items-start gap-2 border-b border-line py-2">
+            <span className="pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
               Título
             </span>
             <input
               value={fields.title}
-              onChange={(e) => setFields({ ...fields, title: e.target.value })}
-              className="rounded-lg border border-line bg-panel-2 px-2.5 py-2 text-[13.5px] font-semibold text-ink"
+              onChange={(event) => setFields({ ...fields, title: event.target.value })}
+              className="min-w-0 border-0 bg-transparent p-0 text-right text-[13px] font-bold leading-4 text-ink outline-none"
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">
+          <label className="grid grid-cols-[84px_1fr] items-start gap-2 border-b border-line py-2">
+            <span className="pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
               Descripción
             </span>
             <textarea
               value={fields.description}
-              onChange={(e) => setFields({ ...fields, description: e.target.value })}
-              rows={3}
-              className="rounded-lg border border-line bg-panel-2 px-2.5 py-2 text-[13px] text-ink"
+              onChange={(event) => setFields({ ...fields, description: event.target.value })}
+              rows={2}
+              className="min-w-0 resize-none border-0 bg-transparent p-0 text-right text-[12px] leading-4 text-muted outline-none"
             />
           </label>
 
-          <p className="text-[11px] text-faint">
+          {location.isFallback && (
+            <div className="mt-3 rounded-lg border border-[#f4c54255] bg-panel-2 p-2.5">
+              <p className="text-[11px] leading-4 text-sev-road">
+                No pudimos obtener tu ubicación. Ajusta la ubicación aproximada antes de publicar.
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
+                  Latitud
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={location.lat}
+                    onChange={(event) =>
+                      setLocation({ ...location, lat: Number(event.target.value) })
+                    }
+                    className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 text-[12px] text-ink outline-none"
+                  />
+                </label>
+                <label className="text-[9px] font-semibold uppercase tracking-[0.08em] text-faint">
+                  Longitud
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={location.lng}
+                    onChange={(event) =>
+                      setLocation({ ...location, lng: Number(event.target.value) })
+                    }
+                    className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 text-[12px] text-ink outline-none"
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
+          <p className="mt-3 border-l border-line pl-2 text-[10.5px] leading-4 text-faint">
             Puedes editar cualquier campo antes de publicar.
           </p>
-
-          <button
-            type="button"
-            disabled={phase === "publishing"}
-            onClick={publish}
-            className="flex w-full items-center justify-center rounded-[14px] bg-accent px-3 py-3 text-sm font-bold text-accent-ink disabled:opacity-60"
-          >
-            {phase === "publishing" ? "Publicando…" : "Publicar incidente"}
-          </button>
-        </div>
+        </section>
       )}
+
+      <button
+        type="button"
+        disabled={!fields || !location || phase === "publishing"}
+        onClick={publish}
+        className="mt-auto rounded-[14px] bg-accent px-3 py-3 text-[14px] font-extrabold text-accent-ink shadow-[0_12px_28px_-12px_var(--accent)] disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        {phase === "publishing" ? "Publicando…" : "Publicar incidente"}
+      </button>
     </div>
   );
 }

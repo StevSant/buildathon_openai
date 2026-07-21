@@ -1,5 +1,4 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { clampSeverity } from "@pulso/core";
 import type {
   Category,
   ConfirmationKind,
@@ -7,14 +6,13 @@ import type {
   IncidentStatus,
   NearbyIncident,
 } from "@pulso/core";
-import { supabase } from "./supabase";
 import { config } from "./config";
+import { supabase } from "./supabase";
 
-// Thin data clients (no hexagon inside React). They call the same PostGIS RPCs the
-// agent-tools function uses, and cast the snake_case RPC rows into the snake_case
-// @pulso/core DTOs the UI consumes (mirroring the SupabaseIncidentRepository adapter).
+// Thin client for the incident RPCs. The SQL DTOs use the same snake_case fields as
+// the public domain types, including lng/lat, so no client-side reshaping is needed.
 
-// Fetch active incidents near a point via the get_nearby_incidents RPC.
+// Fetch the active incidents around a location.
 export async function getNearbyIncidents(params: {
   lat: number;
   long: number;
@@ -27,53 +25,25 @@ export async function getNearbyIncidents(params: {
     radius_meters: params.radiusMeters ?? config.defaultRadiusMeters,
     filter_category: params.category ?? null,
   });
-  if (error) throw error;
 
-  const rows = (data ?? []) as Array<Record<string, unknown>>;
-  return rows.map((row) => ({
-    id: row.id as string,
-    title: row.title as string,
-    description: (row.description as string | null) ?? null,
-    category: row.category as Category,
-    severity: clampSeverity(row.severity as number),
-    status: row.status as IncidentStatus,
-    distance_meters: row.distance_meters as number,
-    confirmations: row.confirmations as number,
-    created_at: row.created_at as string,
-    lng: row.lng as number,
-    lat: row.lat as number,
-  }));
+  if (error) throw error;
+  return (data ?? []) as NearbyIncident[];
 }
 
-// One incident's public detail (no reporter PII beyond display_name).
+// Fetch one anonymous incident detail. Supabase returns table RPC results as an array.
 export async function getIncidentDetails(
   incidentId: string,
 ): Promise<IncidentDetails | null> {
   const { data, error } = await supabase.rpc("get_incident_details", {
     target_id: incidentId,
   });
-  if (error) throw error;
 
-  const row = (data ?? [])[0] as Record<string, unknown> | undefined;
-  if (!row) return null;
-  return {
-    id: row.id as string,
-    title: row.title as string,
-    description: (row.description as string | null) ?? null,
-    category: row.category as Category,
-    severity: clampSeverity(row.severity as number),
-    status: row.status as IncidentStatus,
-    confirmations: row.confirmations as number,
-    reporter_name: (row.reporter_name as string | null) ?? null,
-    reporter_verified: Boolean(row.reporter_verified),
-    created_at: row.created_at as string,
-    lng: row.lng as number,
-    lat: row.lat as number,
-  };
+  if (error) throw error;
+  const rows = (data ?? []) as IncidentDetails[];
+  return rows[0] ?? null;
 }
 
-// Register a confirm/dispute vote. user_id is derived server-side from the JWT (the RPC is
-// security invoker); it is never trusted from the client.
+// Register a confirmation or dispute. The authenticated user is derived by the RPC.
 export async function confirmIncident(
   incidentId: string,
   kind: ConfirmationKind,
@@ -82,25 +52,29 @@ export async function confirmIncident(
     target_id: incidentId,
     kind,
   });
-  if (error) throw error;
 
-  const row = ((data ?? [])[0] ?? {}) as Record<string, unknown>;
+  if (error) throw error;
+  const row = ((Array.isArray(data) ? data[0] : data) ?? {}) as {
+    id?: string;
+    confirmations?: number;
+    status?: IncidentStatus;
+  };
+
   return {
-    id: (row.id as string) ?? incidentId,
-    confirmations: (row.confirmations as number) ?? 0,
-    status: row.status as IncidentStatus,
+    id: row.id ?? incidentId,
+    confirmations: row.confirmations ?? 0,
+    status: row.status ?? "provisional",
   };
 }
 
-// Subscribe to every insert/update/delete on incidents. Postgres Changes is the fastest
-// path for the MVP; the callback typically re-runs getNearbyIncidents to refresh the map.
+// The map owns this Realtime channel; notifications subscribe on a separate channel.
 export function subscribeToIncidents(onChange: () => void): RealtimeChannel {
   return supabase
     .channel("incidents-map")
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "incidents" },
-      () => onChange(),
+      onChange,
     )
     .subscribe();
 }

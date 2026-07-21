@@ -1,20 +1,26 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { supabase, config } from "@/lib";
+import { useEffect, useRef, useState } from "react";
+import { config, supabase } from "@/lib";
 
-// Manual panic button. Press-and-hold to send the user's current location to their
-// accepted emergency contacts via the proximity-dispatcher function (manual-SOS payload).
 const HOLD_MS = 1200;
 
+// Sends the contract-defined manual SOS payload after a deliberate press-and-hold interaction.
 export default function SosButton() {
-  const [state, setState] = useState<"idle" | "arming" | "sending" | "sent" | "error">(
-    "idle",
-  );
+  const [state, setState] = useState<"idle" | "arming" | "sending" | "sent" | "error">("idle");
+  const [dispatched, setDispatched] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function fire() {
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  async function fire(): Promise<void> {
+    timer.current = null;
     setState("sending");
+
     try {
       const position = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -22,16 +28,16 @@ export default function SosButton() {
           timeout: 8000,
         }),
       );
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
-      if (!token) throw new Error("Sin sesión");
-      const res = await fetch(`${config.functionsUrl}/proximity-dispatcher`, {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Missing session");
+
+      const response = await fetch(`${config.functionsUrl}/proximity-dispatcher`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        // CONTRACT §4: manual-SOS payload { type: 'sos', location: { lat, lng } }.
         body: JSON.stringify({
           type: "sos",
           location: {
@@ -40,31 +46,45 @@ export default function SosButton() {
           },
         }),
       });
-      if (!res.ok) throw new Error(`SOS falló: ${res.status}`);
+      if (!response.ok) throw new Error(`SOS failed: ${response.status}`);
+
+      const body = (await response.json()) as { dispatched?: unknown };
+      const count =
+        typeof body.dispatched === "number" && Number.isFinite(body.dispatched)
+          ? Math.max(0, Math.trunc(body.dispatched))
+          : 0;
+      setDispatched(count);
       setState("sent");
     } catch {
       setState("error");
     }
   }
 
-  function startHold() {
+  function startHold(): void {
+    if (state === "arming" || state === "sending") return;
     setState("arming");
-    timer.current = setTimeout(fire, HOLD_MS);
+    timer.current = setTimeout(() => {
+      void fire();
+    }, HOLD_MS);
   }
 
-  function cancelHold() {
-    if (timer.current) clearTimeout(timer.current);
-    if (state === "arming") setState("idle");
+  function cancelHold(): void {
+    if (!timer.current) return;
+    clearTimeout(timer.current);
+    timer.current = null;
+    setState("idle");
   }
 
   const label =
     state === "sent"
-      ? "Ubicación enviada"
+      ? `Enviado a ${dispatched} ${dispatched === 1 ? "contacto" : "contactos"}`
       : state === "sending"
         ? "Enviando…"
-        : state === "error"
-          ? "No se pudo enviar — reintenta"
-          : "SOS · Botón de pánico";
+        : state === "arming"
+          ? "Sigue presionando…"
+          : state === "error"
+            ? "No se pudo enviar — reintenta"
+            : "SOS · Botón de pánico";
 
   return (
     <button
@@ -72,10 +92,26 @@ export default function SosButton() {
       onPointerDown={startHold}
       onPointerUp={cancelHold}
       onPointerLeave={cancelHold}
+      onPointerCancel={cancelHold}
+      onKeyDown={(event) => {
+        if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        startHold();
+      }}
+      onKeyUp={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        cancelHold();
+      }}
+      onBlur={cancelHold}
+      aria-describedby="sos-instructions"
       className="mt-1 flex w-full flex-col items-center gap-1 rounded-2xl border-0 bg-gradient-to-b from-[#FF6B6B] to-[#DE2A2A] px-3 py-3.5 text-white shadow-[0_12px_30px_-12px_#ff4d4d]"
     >
-      <b className="text-[15px] font-extrabold tracking-wide">🆘 {label}</b>
-      <small className="text-[10.5px] font-medium opacity-90">
+      <b className="flex items-center gap-1.5 text-[15px] font-extrabold tracking-wide">
+        <span className="rounded bg-white/20 px-1 py-0.5 text-[8px] tracking-normal">SOS</span>
+        {label}
+      </b>
+      <small id="sos-instructions" className="text-[10.5px] font-medium opacity-90">
         Mantén presionado para enviar tu ubicación a tus contactos
       </small>
     </button>
