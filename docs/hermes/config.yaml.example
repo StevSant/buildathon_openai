@@ -1,0 +1,54 @@
+# Hermes Agent config for Pulso — deploy to ~/.hermes/config.yaml on the Azure VM.
+# Non-secret behaviour only. Secrets live in ~/.hermes/.env (see .env.example).
+# Keys verified against NousResearch/hermes-agent cli-config.yaml.example.
+# Apply with: hermes config edit   (then paste), or hermes config set KEY VALUE.
+
+# ── Model: OpenAI (Buildathon rubric — "Uso de OpenAI") ─────────────────────────
+model:
+  provider: openai              # or "custom" (+ base_url) for the event's OpenAI-compatible gateway
+  default: gpt-5.6-terra        # event model; swap to an id your OPENAI_API_KEY can reach
+  context_length: 200000
+  # base_url: ${OPENAI_BASE_URL}   # only with provider: custom
+
+agent:
+  max_turns: 40
+  reasoning_effort: "low"       # WhatsApp Q&A is light; keep it snappy and cheap
+
+# ── Pulso data as a LOCAL stdio MCP shim → runtime toolset "mcp-pulso" ───────────
+# The shim runs ON THIS VM (backend frozen). It phone-matches the sender → user_id,
+# mints an 'authenticated' Supabase JWT, and forwards to the existing agent-tools edge fn.
+# Tools surface as mcp_pulso_get_nearby_incidents / _get_incident_details / _confirm_incident.
+mcp_servers:
+  pulso:
+    command: python
+    args: ["/root/.hermes/pulso_mcp.py"]
+    env:
+      AGENT_TOOLS_URL: ${AGENT_TOOLS_URL}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+
+# ── CRITICAL SECURITY: allowlist tools per platform (inclusive model) ────────────
+# Hermes controls tools INCLUSIVELY — a platform only gets the toolsets you assign.
+# Give WhatsApp ONLY the Pulso toolset: no terminal/web/browser/image reach a public bot.
+platform_toolsets:
+  whatsapp:
+    - mcp-pulso
+
+# ── Terminal backend: sandbox as defence-in-depth ───────────────────────────────
+terminal:
+  backend: docker
+  timeout: 60
+
+# ── WhatsApp behaviour (connection/secrets in .env; link via `hermes whatsapp`) ──
+# NOTE: verify exact nesting on the VM with `hermes config get` — repo shows platform
+# behaviour under `platforms:`; some versions expose `whatsapp:` at top level.
+platforms:
+  whatsapp:
+    extra:
+      reply_prefix: ""                    # no "[Hermes]" header on replies
+      unauthorized_dm_behavior: ignore    # stay silent to numbers not in WHATSAPP_ALLOWED_USERS
+      text_batch_delay_seconds: 3.0       # merge rapid-fire messages into one turn
+
+display:
+  language: es
+  interim_assistant_messages: true        # send mid-turn "typing…"-style updates
