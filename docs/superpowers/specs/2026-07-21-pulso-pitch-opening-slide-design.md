@@ -97,7 +97,9 @@ at `/pitch/index.html` and can be opened directly for presentation or screenshot
 - Use semantic headings and list markup.
 - Maintain readable contrast for body copy and labels.
 - Do not rely on color alone to identify incident categories.
-- Include `lang="es"`, focus-visible styles for the QR link, and meaningful image alt text.
+- Include `lang="es"`, focus-visible styles for the focusable QR wrapper, and meaningful image
+  alt text. The QR is a figure rather than an invented external link because its destination is
+  encoded in the user-provided image.
 
 ## Verification
 

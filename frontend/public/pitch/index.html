@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0e13" />
+    <meta
+      name="description"
+      content="Pulso convierte el caos urbano en decisiones seguras."
+    />
+    <title>Pulso | La ciudad en tiempo real</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="demo" class="pitch-slide" aria-labelledby="slide-title">
+      <section class="copy-column" aria-label="Propuesta de valor de Pulso">
+        <header class="brand-lockup">
+          <a class="brand" href="#slide-title" aria-label="Pulso, inicio de la diapositiva">
+            <span class="brand-mark" aria-hidden="true">
+              <span class="brand-mark__ring brand-mark__ring--outer"></span>
+              <span class="brand-mark__ring brand-mark__ring--inner"></span>
+              <span class="brand-mark__dot"></span>
+            </span>
+            <span class="wordmark">Pulso</span>
+          </a>
+          <span class="brand-context">Información urbana en tiempo real</span>
+        </header>
+
+        <div class="hero-copy">
+          <p class="kicker"><span class="kicker-dot" aria-hidden="true"></span>Una ciudad que se informa junta</p>
+          <h1 id="slide-title">Pulso convierte el <em>caos urbano</em> en decisiones seguras.</h1>
+          <p class="lede">
+            La plataforma cívica que conecta reportes ciudadanos, inteligencia artificial y datos
+            en tiempo real para que cada persona sepa qué ocurre cerca de ella y pueda actuar mejor.
+          </p>
+          <p class="closing-line">De una alerta aislada a una ciudad que se cuida en tiempo real.</p>
+        </div>
+      </section>
+
+      <section class="visual-column" aria-label="Mapa conceptual de incidentes urbanos">
+        <div class="map-scene" role="img" aria-label="Mapa urbano nocturno con reportes de incidentes y una alerta verificada">
+          <div class="map-heading">
+            <span class="map-heading__live"><span class="live-dot" aria-hidden="true"></span>En vivo</span>
+            <span>Portoviejo, Manabí</span>
+          </div>
+
+          <svg class="map-illustration" viewBox="0 0 720 620" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="river" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#4fa9ff" stop-opacity="0.05" />
+                <stop offset="0.5" stop-color="#4fa9ff" stop-opacity="0.35" />
+                <stop offset="1" stop-color="#4fa9ff" stop-opacity="0.04" />
+              </linearGradient>
+              <radialGradient id="mapGlow" cx="50%" cy="48%" r="60%">
+                <stop offset="0" stop-color="#35e0c1" stop-opacity="0.12" />
+                <stop offset="1" stop-color="#35e0c1" stop-opacity="0" />
+              </radialGradient>
+            </defs>
+            <rect width="720" height="620" fill="url(#mapGlow)" />
+            <path class="river" d="M72 635 C174 515 198 426 166 338 C139 263 190 143 316 54" fill="none" stroke="url(#river)" stroke-width="34" stroke-linecap="round" />
+            <g class="map-grid" fill="none" stroke-linecap="round">
+              <path d="M18 152 L708 322" />
+              <path d="M-28 287 L694 487" />
+              <path d="M32 438 L620 600" />
+              <path d="M118 -18 L303 638" />
+              <path d="M300 -18 L454 638" />
+              <path d="M520 -18 L618 638" />
+              <path d="M676 18 L338 638" />
+              <path d="M108 34 L704 172" />
+            </g>
+            <g class="map-roads" fill="none" stroke-linecap="round">
+              <path d="M28 382 C170 332 245 360 350 306 S542 194 700 214" />
+              <path d="M130 592 C226 478 302 452 365 368 S486 222 586 72" />
+              <path d="M74 202 C164 223 241 238 314 216 S478 134 678 126" />
+              <path d="M238 610 C266 506 300 458 300 372 S332 221 414 18" />
+            </g>
+            <g class="map-blocks" fill="none" stroke-linecap="round">
+              <path d="M120 267h66m-40 20h52m-28 20h60" />
+              <path d="M420 280h74m-52 22h98m-118 22h58" />
+              <path d="M508 420h88m-112 22h138m-100 22h84" />
+              <path d="M202 452h66m-84 23h88m-72 22h52" />
+            </g>
+            <g class="map-labels" fill="#89a7b8">
+              <text x="80" y="118">CENTRO</text>
+              <text x="530" y="100">SAN PABLO</text>
+              <text x="504" y="566">LOS CEREZOS</text>
+            </g>
+          </svg>
+
+          <span class="map-marker map-marker--fire" style="--x: 27%; --y: 28%" aria-hidden="true">
+            <span class="marker-pulse"></span><span class="marker-core">!</span>
+          </span>
+          <span class="map-marker map-marker--road" style="--x: 69%; --y: 35%" aria-hidden="true">
+            <span class="marker-pulse"></span><span class="marker-core">×</span>
+          </span>
+          <span class="map-marker map-marker--flood" style="--x: 58%; --y: 69%" aria-hidden="true">
+            <span class="marker-pulse"></span><span class="marker-core">≈</span>
+          </span>
+          <span class="map-marker map-marker--active" style="--x: 42%; --y: 48%" aria-hidden="true">
+            <span class="marker-pulse"></span><span class="marker-core">+</span>
+          </span>
+
+          <aside class="alert-card" aria-label="Alerta urbana verificada">
+            <div class="alert-card__topline">
+              <span class="alert-card__signal"><span class="live-dot" aria-hidden="true"></span>Reporte verificado</span>
+              <span class="alert-card__time">Ahora</span>
+            </div>
+            <h2>Accidente en la vía principal</h2>
+            <p>Confirmado por la comunidad. Pulso ayuda a decidir otra ruta.</p>
+            <div class="alert-card__meta"><span>Severidad alta</span><span>3 confirmaciones</span></div>
+          </aside>
+
+          <div class="map-legend" aria-hidden="true">
+            <span><i class="legend-dot legend-dot--teal"></i>Reportes activos</span>
+            <span><i class="legend-dot legend-dot--coral"></i>Alerta seleccionada</span>
+          </div>
+        </div>
+
+        <figure class="qr-cta" tabindex="0">
+          <img src="./pulso-demo-qr.png" alt="Código QR para abrir la demo de Pulso" />
+          <figcaption id="qr-caption">
+            <span class="qr-cta__label">Escanea para ver la demo</span>
+            <span class="qr-cta__hint">Abre Pulso desde tu teléfono</span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="signals" aria-label="Diferenciadores de Pulso">
+        <ul>
+          <li><span class="signal-icon signal-icon--map" aria-hidden="true">◌</span><span>Mapa colaborativo<br /><strong>en tiempo real</strong></span></li>
+          <li><span class="signal-icon signal-icon--ai" aria-hidden="true">✦</span><span>Reportes<br /><strong>estructurados con IA</strong></span></li>
+          <li><span class="signal-icon signal-icon--voice" aria-hidden="true">◖</span><span>Agente de voz<br /><strong>“Cerca”</strong></span></li>
+          <li><span class="signal-icon signal-icon--verified" aria-hidden="true">✓</span><span>Identidad<br /><strong>verificada</strong></span></li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
