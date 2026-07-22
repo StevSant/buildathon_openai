@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { CATEGORY_VALUES, INCIDENT_STATUS_LABELS } from "@pulso/core";
 import {
   getNearbyIncidents,
@@ -69,6 +75,8 @@ export default function RealtimeAssistant({
   const currentExchangeId = useRef<number | null>(null);
   const exchangeBusyRef = useRef(false);
   const [exchangeBusy, setExchangeBusy] = useState(false);
+  const voiceTurnActiveRef = useRef(false);
+  const [voiceTurnActive, setVoiceTurnActive] = useState(false);
   const conversationEnd = useRef<HTMLDivElement | null>(null);
 
   useEffect(
@@ -92,6 +100,21 @@ export default function RealtimeAssistant({
     end.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [turns]);
 
+  useEffect(() => {
+    function finishTurnOnFocusLoss() {
+      if (document.visibilityState === "hidden" || !document.hasFocus()) {
+        finishVoiceTurn();
+      }
+    }
+
+    window.addEventListener("blur", finishTurnOnFocusLoss);
+    document.addEventListener("visibilitychange", finishTurnOnFocusLoss);
+    return () => {
+      window.removeEventListener("blur", finishTurnOnFocusLoss);
+      document.removeEventListener("visibilitychange", finishTurnOnFocusLoss);
+    };
+  }, []);
+
   function updateExchangeBusy(busy: boolean) {
     exchangeBusyRef.current = busy;
     setExchangeBusy(busy);
@@ -104,6 +127,8 @@ export default function RealtimeAssistant({
       nextStatus === "error" ||
       nextStatus === "closed"
     ) {
+      voiceTurnActiveRef.current = false;
+      setVoiceTurnActive(false);
       updateExchangeBusy(false);
       return;
     }
@@ -333,38 +358,60 @@ export default function RealtimeAssistant({
     handle.current?.stop();
     handle.current = null;
     currentExchangeId.current = null;
+    voiceTurnActiveRef.current = false;
+    setVoiceTurnActive(false);
     updateExchangeBusy(false);
     setStatus("idle");
   }
 
   function startVoiceTurn(): boolean {
-    if (status !== "ready" || exchangeBusyRef.current) return false;
+    if (
+      (status !== "ready" && status !== "speaking") ||
+      voiceTurnActiveRef.current
+    ) {
+      return false;
+    }
     const session = handle.current;
     if (!session?.startVoiceTurn()) return false;
 
+    voiceTurnActiveRef.current = true;
+    setVoiceTurnActive(true);
     openExchange();
     return true;
   }
 
   function finishVoiceTurn() {
-    if (status !== "listening") return;
+    if (!voiceTurnActiveRef.current) return;
+    voiceTurnActiveRef.current = false;
+    setVoiceTurnActive(false);
     handle.current?.finishVoiceTurn();
   }
 
-  function handleOrbTap() {
-    if (status === "connecting") {
-      stop();
-      return;
+  function handleOrbPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0 || !startVoiceTurn()) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleOrbPointerEnd(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!voiceTurnActiveRef.current) return;
+    event.preventDefault();
+    finishVoiceTurn();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (status === "ready") {
-      startVoiceTurn();
-      return;
-    }
-    if (status === "listening") {
-      finishVoiceTurn();
-      return;
-    }
-    if (status !== "speaking") void start();
+  }
+
+  function handleOrbKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.repeat || (event.key !== " " && event.key !== "Enter")) return;
+    event.preventDefault();
+    startVoiceTurn();
+  }
+
+  function handleOrbKeyUp(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== " " && event.key !== "Enter") return;
+    event.preventDefault();
+    finishVoiceTurn();
   }
 
   async function ask(question: string) {
@@ -387,15 +434,11 @@ export default function RealtimeAssistant({
 
   const toggle = live ? stop : start;
   const orbLabel =
-    status === "connecting"
-      ? "Cancelar conexión con Cerca"
-      : status === "listening"
-        ? "Enviar mensaje de voz a Cerca"
-        : status === "ready"
-          ? "Empezar a hablar con Cerca"
-          : status === "speaking"
-            ? "Cerca está respondiendo"
-            : "Iniciar conversación con Cerca";
+    status === "listening"
+      ? "Suelta para enviar tu mensaje a Cerca"
+      : connected
+        ? "Mantén presionado para hablar con Cerca"
+        : "Conecta con Cerca para hablar";
 
   const footer =
     status === "connecting"
@@ -403,9 +446,9 @@ export default function RealtimeAssistant({
       : status === "speaking"
         ? "Cerca está respondiendo…"
         : status === "listening"
-          ? "Escuchando… toca el orbe para enviar"
+          ? "Te escucho… suelta el orbe para enviar"
           : status === "ready"
-            ? "Toca el orbe para hablar"
+            ? "Mantén presionado el orbe para hablar"
             : status === "error"
               ? "Error de conexión — toca Reintentar"
               : "Inicia la conversación para hablar";
@@ -445,9 +488,16 @@ export default function RealtimeAssistant({
         <button
           type="button"
           className={live ? "orb" : "orb idle"}
-          disabled={status === "speaking"}
-          onClick={handleOrbTap}
+          disabled={!connected}
+          onPointerDown={handleOrbPointerDown}
+          onPointerUp={handleOrbPointerEnd}
+          onPointerCancel={handleOrbPointerEnd}
+          onLostPointerCapture={handleOrbPointerEnd}
+          onKeyDown={handleOrbKeyDown}
+          onKeyUp={handleOrbKeyUp}
+          onBlur={finishVoiceTurn}
           aria-label={orbLabel}
+          aria-pressed={voiceTurnActive}
           style={{
             appearance: "none",
             WebkitAppearance: "none",
