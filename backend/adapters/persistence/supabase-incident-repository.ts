@@ -77,6 +77,11 @@ export class SupabaseIncidentRepository implements IncidentRepository {
       confirmations: row.confirmations,
       disputes: Number(row.disputes ?? 0),
       reporter_verified: Boolean(row.reporter_verified),
+      // Anonymous, viewer-specific eligibility (migration 0007) — never a reporter identity.
+      viewer_is_reporter: Boolean(row.viewer_is_reporter),
+      can_vote: Boolean(row.can_vote),
+      viewer_vote:
+        row.viewer_vote === 'confirm' || row.viewer_vote === 'dispute' ? row.viewer_vote : null,
       created_at: row.created_at,
       lng: row.lng,
       lat: row.lat,

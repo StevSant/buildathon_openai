@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import type { Category, IncidentDetails, IncidentStatus } from "@pulso/core";
+import type { Category, ConfirmationKind, IncidentDetails, IncidentStatus } from "@pulso/core";
 import { IncidentComments } from "@/components";
 import { config, confirmIncident, getIncidentDetails, haversineMeters } from "@/lib";
 import Icon from "./Icon";
@@ -62,6 +62,21 @@ function formatRelativeTime(iso: string): string {
   return `hace ${Math.floor(hours / 24)} d`;
 }
 
+// Map a confirm_incident failure to Spanish copy. The server is the source of truth for
+// eligibility: 'PT403' (self-vote, defense in depth) and '42501' (disabled account) are the
+// two predictable authorization errors the RPC raises.
+function voteErrorMessage(reason: unknown): string {
+  const code = (reason as { code?: string })?.code;
+  const message = reason instanceof Error ? reason.message : "";
+  if (code === "PT403" || /own incident/i.test(message)) {
+    return "No puedes confirmar ni disputar tu propio reporte.";
+  }
+  if (code === "42501" || /row-level security/i.test(message)) {
+    return "Tu cuenta está deshabilitada por reportes falsos; no puedes votar.";
+  }
+  return "No pudimos registrar tu voto. Intenta de nuevo.";
+}
+
 // Detail sheet for one anonymous public incident. The API intentionally exposes only the
 // reporter_verified flag, never a reporter name, identity document, or contact data.
 export default function IncidentDetailSheet({
@@ -97,20 +112,16 @@ export default function IncidentDetailSheet({
     };
   }, [incidentId]);
 
-  async function vote(kind: "confirm" | "dispute") {
+  async function vote(kind: ConfirmationKind) {
+    // Defense in depth: the author's controls are hidden, but never submit a self-vote.
+    if (!details || !details.can_vote) return;
     setBusy(true);
     setVoteError(null);
     try {
       await confirmIncident(incidentId, kind);
       onClose();
     } catch (reason) {
-      const code = (reason as { code?: string })?.code;
-      const message = reason instanceof Error ? reason.message : "";
-      setVoteError(
-        code === "42501" || /row-level security/i.test(message)
-          ? "Tu cuenta está deshabilitada por reportes falsos; no puedes votar."
-          : "No pudimos registrar tu voto. Intenta de nuevo.",
-      );
+      setVoteError(voteErrorMessage(reason));
     } finally {
       setBusy(false);
     }
@@ -233,28 +244,44 @@ export default function IncidentDetailSheet({
         </div>
       </div>
 
-      <p className="helper">¿Lo estás viendo? Ayuda a la comunidad a verificarlo.</p>
+      {details && !details.can_vote ? (
+        // Issue #13: the report's author never sees vote controls, only this explanation.
+        // Eligibility is anonymous — the API tells us "you are the reporter", never who is.
+        <div className="det-actions" style={{ display: "block" }}>
+          <p
+            className="det-desc"
+            style={{ margin: 0, textAlign: "center", fontSize: 12, color: "var(--muted)" }}
+          >
+            Este es tu reporte. Para cuidar la confianza de la comunidad no puedes confirmar ni
+            disputar tus propios reportes; otras personas se encargan de verificarlo.
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="helper">¿Lo estás viendo? Ayuda a la comunidad a verificarlo.</p>
 
-      <div className="det-actions">
-        <button
-          type="button"
-          className="btn confirm"
-          disabled={busy || !details}
-          onClick={() => vote("confirm")}
-        >
-          <Icon name="ic-check" style={{ width: 17, height: 17, strokeWidth: 2.4 }} />
-          Confirmar
-        </button>
-        <button
-          type="button"
-          className="btn dispute"
-          style={{ maxWidth: 120 }}
-          disabled={busy || !details}
-          onClick={() => vote("dispute")}
-        >
-          No es correcto
-        </button>
-      </div>
+          <div className="det-actions">
+            <button
+              type="button"
+              className="btn confirm"
+              disabled={busy || !details}
+              onClick={() => vote("confirm")}
+            >
+              <Icon name="ic-check" style={{ width: 17, height: 17, strokeWidth: 2.4 }} />
+              Confirmar
+            </button>
+            <button
+              type="button"
+              className="btn dispute"
+              style={{ maxWidth: 120 }}
+              disabled={busy || !details}
+              onClick={() => vote("dispute")}
+            >
+              No es correcto
+            </button>
+          </div>
+        </>
+      )}
     </section>
   );
 }

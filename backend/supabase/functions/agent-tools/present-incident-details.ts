@@ -36,6 +36,18 @@ export function presentIncidentDetails(details: IncidentDetails | null) {
       verification_label: details.reporter_verified
         ? "reportado por una persona con identidad verificada"
         : "reportado por una persona sin identidad verificada",
+      // Anonymous, viewer-specific voting eligibility (never the reporter's identity) so the
+      // assistant knows when it must NOT offer to confirm/dispute on the caller's behalf.
+      viewer_is_reporter: details.viewer_is_reporter,
+      can_vote: details.can_vote,
+      viewer_vote: details.viewer_vote,
+      eligibility_label: details.viewer_is_reporter
+        ? "quien consulta es la persona que creó este reporte, por lo que no puede confirmarlo ni disputarlo"
+        : details.viewer_vote === "confirm"
+          ? "quien consulta ya confirmó este incidente; solo podría cambiar su voto a una disputa"
+          : details.viewer_vote === "dispute"
+            ? "quien consulta ya disputó este incidente; solo podría cambiar su voto a una confirmación"
+            : "quien consulta aún no ha votado y puede confirmar o disputar este incidente",
       has_photo: details.photo_path !== null,
       photo_path: details.photo_path,
       created_at: details.created_at,
