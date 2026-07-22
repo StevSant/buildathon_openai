@@ -425,7 +425,8 @@ body {
 .comment-form { margin-top: 14px; }
 .comment-form textarea { width: 100%; min-height: 74px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: var(--ink); padding: 10px; font: inherit; font-size: 12px; outline: none; }
 .comment-form textarea:focus { border-color: var(--accent); }
-.comment-form-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.comment-form-footer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.comment-form-footer .comment-count { align-self: flex-end; color: var(--muted); font-size: 10px; }
 .comment-error { margin: 8px 0 0; font-size: 11px; color: var(--sev-fire); }
 .tagpri { font: 700 9px/1 var(--sans); letter-spacing: 0.05em; text-transform: uppercase; padding: 3px 6px; border-radius: 5px; }
 .pri-alert { color: #fff; background: color-mix(in srgb, var(--sev-fire) 72%, transparent); }

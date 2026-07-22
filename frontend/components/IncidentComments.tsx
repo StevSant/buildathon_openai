@@ -88,7 +88,7 @@ export default function IncidentComments({ incidentId }: { incidentId: string })
           rows={3}
         />
         <div className="comment-form-footer">
-          <span>{draft.length}/1000</span>
+          <span className="comment-count">{draft.length}/1000</span>
           <button type="submit" className="btn primary sm" disabled={busy || !draft.trim()}>
             {busy ? "Publicando..." : "Comentar"}
           </button>
