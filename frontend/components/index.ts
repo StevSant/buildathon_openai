@@ -18,6 +18,8 @@ export { default as NotificationBell } from "./NotificationBell";
 export { default as NotificationToast } from "./NotificationToast";
 export { default as NotificationBottomSheet } from "./NotificationBottomSheet";
 export { default as NotificationHost } from "./NotificationHost";
+export { default as NotificationSoundToggle } from "./NotificationSoundToggle";
+export { default as LocationProvider } from "./LocationProvider";
 export { default as PermissionsCard } from "./PermissionsCard";
 export { default as SosButton } from "./SosButton";
 export { default as EmergencyContactsForm } from "./EmergencyContactsForm";
