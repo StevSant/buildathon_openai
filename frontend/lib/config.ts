@@ -48,6 +48,9 @@ export const config = {
     "https://api.openai.com/v1/realtime/calls",
   // Map / agent search radius.
   defaultRadiusMeters: num(process.env.NEXT_PUBLIC_DEFAULT_RADIUS_METERS, 3000),
+  // Minimum movement (meters) before a resolved GPS sample counts as a new location. Filters
+  // out GPS jitter so the shared location lifecycle only refetches / reseeds on real moves.
+  locationRefreshMeters: num(process.env.NEXT_PUBLIC_LOCATION_REFRESH_METERS, 50),
   // Proximity-alert thresholds: a nearby incident escalates to a bottom sheet only when it
   // is at least this severe AND closer than this radius. Otherwise it is a discreet toast.
   alertMinSeverity: num(process.env.NEXT_PUBLIC_ALERT_SEVERITY_MIN, 4),

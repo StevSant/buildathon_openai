@@ -9,6 +9,7 @@ import {
   getNearbyIncidents,
   supabase,
   subscribeToNotificationIncidents,
+  useCurrentLocation,
 } from "@/lib";
 
 // Category → sprite icon + severity color, mirroring the mockup's palette mapping.
@@ -68,43 +69,44 @@ function statusChip(
 export default function NotificationsPage() {
   const [rows, setRows] = useState<NearbyIncident[]>([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
-  const location = useRef({
-    lat: config.defaultLat,
-    long: config.defaultLng,
-  });
+  const location = useCurrentLocation();
+
+  // Monotonic request id: a response is applied only if it is still the newest in flight, so a
+  // slower default-coordinate query can never overwrite a newer GPS one.
+  const requestId = useRef(0);
+  const refreshRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     let active = true;
 
     async function refresh(): Promise<void> {
+      const id = ++requestId.current;
       try {
-        const data = await getNearbyIncidents(location.current);
-        if (active) setRows(data);
+        const data = await getNearbyIncidents({
+          lat: location.lat,
+          long: location.long,
+        });
+        if (active && id === requestId.current) setRows(data);
       } catch {
-        if (active) setRows([]);
+        if (active && id === requestId.current) setRows([]);
       }
     }
 
+    refreshRef.current = () => void refresh();
     void refresh();
-    const channel = subscribeToNotificationIncidents(
-      "center",
-      () => void refresh(),
-    );
-
-    navigator.geolocation?.getCurrentPosition(
-      (position) => {
-        if (!active) return;
-        location.current = {
-          lat: position.coords.latitude,
-          long: position.coords.longitude,
-        };
-        void refresh();
-      },
-      () => undefined,
-    );
 
     return () => {
       active = false;
+    };
+  }, [location.lat, location.long]);
+
+  // Subscribe once; realtime changes always refetch against the latest coordinates via the ref.
+  useEffect(() => {
+    const channel = subscribeToNotificationIncidents(
+      "center",
+      () => refreshRef.current(),
+    );
+    return () => {
       void supabase.removeChannel(channel);
     };
   }, []);
@@ -190,7 +192,7 @@ export default function NotificationsPage() {
         <IncidentDetailSheet
           incidentId={selectedIncidentId}
           onClose={() => setSelectedIncidentId(null)}
-          viewer={location.current}
+          viewer={{ lat: location.lat, long: location.long }}
         />
       )}
     </div>
