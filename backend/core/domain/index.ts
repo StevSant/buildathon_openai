@@ -24,3 +24,10 @@ export { validateCedula } from './validate-cedula';
 export { clampSeverity } from './clamp-severity';
 export { nextIncidentStatus } from './next-incident-status';
 export { computeTrustScore } from './compute-trust-score';
+
+export type {
+  WhatsAppResendPolicy,
+  WhatsAppResendState,
+  WhatsAppResendDecision,
+} from './whatsapp-resend-policy';
+export { evaluateWhatsAppResend } from './whatsapp-resend-policy';

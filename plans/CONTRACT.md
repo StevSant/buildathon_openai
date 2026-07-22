@@ -107,7 +107,7 @@ from the JWT — **never** trust a `user_id` in the body.
 | `analyze-report` | `{ photo_path: string }` | `{ category: Category, severity: Severity, title: string, description: string }` |
 | `create-realtime-session` | `{ personaId: 'cerca' \| 'ruta', context?: { lat?: number, lng?: number } }` | `{ clientSecret: string, expiresAt: string, model: string, voice: string }` |
 | `agent-tools` | `{ tool: 'get_nearby_incidents' \| 'get_incident_details' \| 'confirm_incident', arguments: object }` | speak-ready envelope over the §3.2 shapes: nearby → `{ total, radius_label, summary, incidents: NearbyIncident&labels[] }` (no lng/lat); details → `{ found, summary? , incident?: IncidentDetails&labels }` (no lng/lat, keeps `photo_path`); confirm → `{ id, confirmations, status, status_label, message }`. `&labels` = added `*_label` strings + `reported_minutes_ago` |
-| `proximity-dispatcher` | incident webhook with `x-pulso-webhook-secret`; **manual SOS:** `{ type: 'sos', location: { lat: number, lng: number } }` with user JWT | `{ dispatched: number }` (successful sends only; one failed contact does not abort later contacts) |
+| `proximity-dispatcher` | incident webhook with `x-pulso-webhook-secret`; **manual SOS:** `{ type: 'sos', location: { lat: number, lng: number } }` with user JWT; **WhatsApp verify/resend (own number):** `{ verifyWhatsapp: true }` with user JWT | `{ dispatched: number }` (successful sends only; one failed contact does not abort later contacts). **verify/resend:** `{ dispatched: 0 \| 1, cooldownSeconds }`; server-side rate-limited → HTTP 429 `{ error, retryAfterSeconds }` (cooldown + per-window cap; codes are never stored) |
 
 Error envelope (all functions): non-2xx → `{ error: string }`.
 
