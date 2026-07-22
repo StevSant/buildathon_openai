@@ -115,11 +115,17 @@ export default function IncidentDetailSheet({
   async function vote(kind: ConfirmationKind) {
     // Defense in depth: the author's controls are hidden, but never submit a self-vote.
     if (!details || !details.can_vote) return;
+    // Issue #14: an identical vote is a no-op — the selected action is also disabled, so this
+    // only guards programmatic calls. Switching to the opposite kind is an intentional change.
+    if (details.viewer_vote === kind) return;
     setBusy(true);
     setVoteError(null);
     try {
       await confirmIncident(incidentId, kind);
-      onClose();
+      // Effective change only: refresh counts/status/viewer_vote from the source of truth and
+      // keep the sheet open so the viewer sees their vote marked (instead of closing blindly).
+      const refreshed = await getIncidentDetails(incidentId);
+      if (refreshed) setDetails(refreshed);
     } catch (reason) {
       setVoteError(voteErrorMessage(reason));
     } finally {
@@ -139,6 +145,7 @@ export default function IncidentDetailSheet({
   const confirmations = details?.confirmations ?? 0;
   const disputes = details?.disputes ?? 0;
   const stackOverflow = Math.max(0, confirmations - 2);
+  const viewerVote = details?.viewer_vote ?? null;
 
   return (
     <section
@@ -258,26 +265,43 @@ export default function IncidentDetailSheet({
         </div>
       ) : (
         <>
-          <p className="helper">¿Lo estás viendo? Ayuda a la comunidad a verificarlo.</p>
+          <p className="helper">
+            {viewerVote
+              ? "Ya registraste tu voto. Puedes cambiarlo con la otra opción."
+              : "¿Lo estás viendo? Ayuda a la comunidad a verificarlo."}
+          </p>
 
           <div className="det-actions">
             <button
               type="button"
               className="btn confirm"
-              disabled={busy || !details}
+              aria-pressed={viewerVote === "confirm"}
+              // Issue #14: the current vote is marked and cannot be resubmitted; the opposite
+              // action stays enabled as an intentional switch (ADR-018).
+              disabled={busy || !details || viewerVote === "confirm"}
+              style={
+                viewerVote === "confirm"
+                  ? { opacity: 1, boxShadow: "inset 0 0 0 2px rgba(4, 20, 11, 0.45)" }
+                  : undefined
+              }
               onClick={() => vote("confirm")}
             >
               <Icon name="ic-check" style={{ width: 17, height: 17, strokeWidth: 2.4 }} />
-              Confirmar
+              {viewerVote === "confirm" ? "Confirmado" : "Confirmar"}
             </button>
             <button
               type="button"
               className="btn dispute"
-              style={{ maxWidth: 120 }}
-              disabled={busy || !details}
+              aria-pressed={viewerVote === "dispute"}
+              disabled={busy || !details || viewerVote === "dispute"}
+              style={
+                viewerVote === "dispute"
+                  ? { maxWidth: 120, opacity: 1, boxShadow: "inset 0 0 0 2px var(--sev-fire)" }
+                  : { maxWidth: 120 }
+              }
               onClick={() => vote("dispute")}
             >
-              No es correcto
+              {viewerVote === "dispute" ? "Marcado" : "No es correcto"}
             </button>
           </div>
         </>
