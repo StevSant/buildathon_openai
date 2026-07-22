@@ -1,0 +1,131 @@
+# Review package: HEAD^..HEAD
+
+## Commits
+201da7e feat(assistant): collapse previous voice exchanges
+
+## Files changed
+ frontend/components/AssistantConversation.tsx | 33 +++++++++++++++++++
+ frontend/components/AssistantTurnList.tsx     | 47 +++++++++++++++++++++++++++
+ frontend/components/index.ts                  |  2 ++
+ 3 files changed, 82 insertions(+)
+
+## Diff
+diff --git a/frontend/components/AssistantConversation.tsx b/frontend/components/AssistantConversation.tsx
+new file mode 100644
+index 0000000..44d7d3e
+--- /dev/null
++++ b/frontend/components/AssistantConversation.tsx
+@@ -0,0 +1,33 @@
++"use client";
++
++import type { AssistantLocation, AssistantTurn } from "@/lib";
++import AssistantTurnList from "./AssistantTurnList";
++
++export default function AssistantConversation({
++  turns,
++  location,
++}: {
++  turns: AssistantTurn[];
++  location: AssistantLocation | null;
++}) {
++  const latestExchangeId = turns.at(-1)?.exchangeId;
++  const previousTurns = turns.filter((turn) => turn.exchangeId !== latestExchangeId);
++  const latestTurns = turns.filter((turn) => turn.exchangeId === latestExchangeId);
++  const previousCount = new Set(previousTurns.map((turn) => turn.exchangeId)).size;
++
++  return (
++    <div className="assistant-conversation">
++      {previousTurns.length > 0 ? (
++        <details className="assistant-history">
++          <summary>
++            Ver conversación anterior
++            <span>{previousCount}</span>
++          </summary>
++          <AssistantTurnList turns={previousTurns} location={location} />
++        </details>
++      ) : null}
++
++      <AssistantTurnList turns={latestTurns} location={location} />
++    </div>
++  );
++}
+diff --git a/frontend/components/AssistantTurnList.tsx b/frontend/components/AssistantTurnList.tsx
+new file mode 100644
+index 0000000..a49cd06
+--- /dev/null
++++ b/frontend/components/AssistantTurnList.tsx
+@@ -0,0 +1,47 @@
++"use client";
++
++import type { AssistantLocation, AssistantTurn } from "@/lib";
++import AssistantIncidentCards from "./AssistantIncidentCards";
++import AssistantIncidentDetailCard from "./AssistantIncidentDetailCard";
++import AssistantIncidentMap from "./AssistantIncidentMap";
++
++export default function AssistantTurnList({
++  turns,
++  location,
++}: {
++  turns: AssistantTurn[];
++  location: AssistantLocation | null;
++}) {
++  return (
++    <div className="assistant-turn-list">
++      {turns.map((turn, index) => {
++        const key = `${turn.exchangeId}-${index}`;
++        if (turn.kind === "incidents") {
++          return (
++            <div key={key} className="assistant-nearby-result">
++              {location ? (
++                <AssistantIncidentMap incidents={turn.incidents} center={location} />
++              ) : null}
++              <AssistantIncidentCards incidents={turn.incidents} />
++            </div>
++          );
++        }
++        if (turn.kind === "detail") {
++          return <AssistantIncidentDetailCard key={key} details={turn.details} />;
++        }
++        if (turn.role === "tool") {
++          return (
++            <div key={key} className="toolcall">
++              {turn.text}
++            </div>
++          );
++        }
++        return (
++          <div key={key} className={turn.role === "user" ? "bubble u" : "bubble a"}>
++            {turn.text}
++          </div>
++        );
++      })}
++    </div>
++  );
++}
+diff --git a/frontend/components/index.ts b/frontend/components/index.ts
+index 38c7cb2..ec2cefc 100644
+--- a/frontend/components/index.ts
++++ b/frontend/components/index.ts
+@@ -3,20 +3,22 @@ export { default as Icon } from "./Icon";
+ export { default as IconSprite } from "./IconSprite";
+ export { default as TabBar } from "./TabBar";
+ export { default as AuthForm } from "./AuthForm";
+ export { default as AuthGuard } from "./AuthGuard";
+ export { default as IncidentMap } from "./IncidentMap";
+ export { default as ReportForm } from "./ReportForm";
+ export { default as RealtimeAssistant } from "./RealtimeAssistant";
+ export { default as AssistantIncidentCards } from "./AssistantIncidentCards";
+ export { default as AssistantIncidentDetailCard } from "./AssistantIncidentDetailCard";
+ export { default as AssistantIncidentMap } from "./AssistantIncidentMap";
++export { default as AssistantTurnList } from "./AssistantTurnList";
++export { default as AssistantConversation } from "./AssistantConversation";
+ export { default as IncidentDetailSheet } from "./IncidentDetailSheet";
+ export { default as IncidentComments } from "./IncidentComments";
+ export { default as NotificationBell } from "./NotificationBell";
+ export { default as NotificationToast } from "./NotificationToast";
+ export { default as NotificationBottomSheet } from "./NotificationBottomSheet";
+ export { default as NotificationHost } from "./NotificationHost";
+ export { default as PermissionsCard } from "./PermissionsCard";
+ export { default as SosButton } from "./SosButton";
+ export { default as EmergencyContactsForm } from "./EmergencyContactsForm";
+ export { default as AlertRulesForm } from "./AlertRulesForm";
