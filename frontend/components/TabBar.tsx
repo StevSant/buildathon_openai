@@ -23,6 +23,11 @@ export default function TabBar() {
 
   return (
     <nav className="tabbar" aria-label="Navegación">
+      {/* Wordmark shown only on the desktop side rail (CSS-gated); hidden on the mobile
+          bottom bar. aria-hidden + non-focusable so it never enters the tab order. */}
+      <span className="tabbar-brand" aria-hidden="true">
+        Pul<em>so</em>
+      </span>
       {TABS.map((tab) => {
         const active = isActive(pathname, tab.href);
         const isReport = "accent" in tab && tab.accent;
