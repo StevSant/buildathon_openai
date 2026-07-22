@@ -6,7 +6,7 @@ import { AuthGuard, NotificationHost, TabBar } from "@/components";
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <AuthGuard>
-      <div className="app-shell">
+      <div className="app-shell app-shell--app">
         <main className="flex flex-1 flex-col overflow-hidden">{children}</main>
         <NotificationHost />
         <TabBar />
