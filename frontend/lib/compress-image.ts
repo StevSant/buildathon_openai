@@ -1,13 +1,15 @@
 import { config } from "./config";
 
-// Client-side photo preparation for report uploads: decode whatever the camera/gallery
-// hands us (JPEG, PNG, WebP, HEIC on iOS) and re-encode as a bounded JPEG so the stored
-// object always matches its .jpg path, uploads stay fast on mobile data, and OpenAI
-// vision always receives a format it can read. Falls back to the original file if the
-// browser cannot decode it — analyze-report surfaces real failures.
+const INVALID_IMAGE_MESSAGE =
+  "No pudimos preparar la foto. Usa una imagen JPG, PNG o WebP válida e inténtalo de nuevo.";
+
+// Decode a browser-supported image and re-encode it as a bounded JPEG so the stored
+// bytes, MIME type, and .jpg path always agree before analyze-report receives the path.
 export async function compressImage(file: File): Promise<Blob> {
+  let bitmap: ImageBitmap | null = null;
+
   try {
-    const bitmap = await createImageBitmap(file);
+    bitmap = await createImageBitmap(file);
     const scale = Math.min(1, config.photoMaxDimension / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
@@ -16,15 +18,21 @@ export async function compressImage(file: File): Promise<Blob> {
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    if (!context) return file;
+    if (!context) throw new Error(INVALID_IMAGE_MESSAGE);
     context.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/jpeg", config.photoJpegQuality),
     );
-    return blob ?? file;
+
+    if (!blob || blob.size === 0 || blob.type !== "image/jpeg") {
+      throw new Error(INVALID_IMAGE_MESSAGE);
+    }
+
+    return blob;
   } catch {
-    return file;
+    throw new Error(INVALID_IMAGE_MESSAGE);
+  } finally {
+    bitmap?.close();
   }
 }

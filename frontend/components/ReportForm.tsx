@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORY_VALUES, clampSeverity } from "@pulso/core";
 import type { Category, Severity } from "@pulso/core";
@@ -56,10 +56,19 @@ export default function ReportForm() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const analysisRequestId = useRef(0);
+  const previewUrl = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    },
+    [],
+  );
 
   async function onPickPhoto(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = "";
     const requestId = ++analysisRequestId.current;
 
     setError(null);
@@ -67,7 +76,9 @@ export default function ReportForm() {
     setIsCategoryConfirmed(false);
     setLocation(null);
     setPhotoPath(null);
-    setPreview(URL.createObjectURL(file));
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    previewUrl.current = URL.createObjectURL(file);
+    setPreview(previewUrl.current);
     setPhase("analyzing");
 
     try {
@@ -229,7 +240,10 @@ export default function ReportForm() {
       )}
 
       {error && (
-        <p style={{ margin: 0, textAlign: "center", fontSize: 12, color: "var(--sev-fire)" }}>
+        <p
+          role="alert"
+          style={{ margin: 0, textAlign: "center", fontSize: 12, color: "var(--sev-fire)" }}
+        >
           {error}
         </p>
       )}
