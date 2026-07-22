@@ -29,7 +29,14 @@ export default function AssistantTurnList({
           );
         }
         if (turn.kind === "detail") {
-          return <AssistantIncidentDetailCard key={key} details={turn.details} />;
+          return (
+            <AssistantIncidentDetailCard
+              key={key}
+              details={turn.details}
+              location={location}
+              showMap={showMaps}
+            />
+          );
         }
         if (turn.role === "tool") {
           return (

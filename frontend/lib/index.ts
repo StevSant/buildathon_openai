@@ -30,6 +30,9 @@ export {
   subscribeNotificationSoundEnabled,
 } from "./notification-sound";
 export { startRealtimeSession } from "./realtime-agent";
+export { hasExplicitConsent } from "./confirm-consent";
+export { ToolError } from "./tool-error";
+export type { ToolErrorKind } from "./tool-error";
 export { readVerifiedIdentityResponse } from "./identity-verification";
 export { authDestination } from "./auth-state";
 export type { AuthSessionLike } from "./auth-state";

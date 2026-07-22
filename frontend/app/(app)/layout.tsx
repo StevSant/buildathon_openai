@@ -8,7 +8,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <AuthGuard>
       <LocationProvider>
-        <div className="app-shell">
+        <div className="app-shell app-shell--app">
           <main className="flex flex-1 flex-col overflow-hidden">{children}</main>
           <NotificationHost />
           <TabBar />
