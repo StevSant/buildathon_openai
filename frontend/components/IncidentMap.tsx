@@ -2,25 +2,22 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
-import Map, { Marker, type MapRef } from "react-map-gl/maplibre";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import MapGL, { Marker, type MapRef } from "react-map-gl/maplibre";
+import Supercluster from "supercluster";
 import type { Category, IncidentStatus, NearbyIncident } from "@pulso/core";
 import { IncidentDetailSheet, Icon, NotificationBell } from "@/components";
-import { config, getNearbyIncidents, subscribeToIncidents } from "@/lib";
+import {
+  config,
+  getNearbyIncidents,
+  subscribeToIncidents,
+  useCurrentLocation,
+} from "@/lib";
 
 // Map presentation values are intentionally separate from data: the categories come from
-// the frozen domain contract, each mapped to its mockup pin color, list icon, and the
-// severity-border class used on the bottom-sheet rows.
-const CATEGORY_PIN: Record<Category, string> = {
-  road_closure: "p-road",
-  accident: "p-acc",
-  flood: "p-flood",
-  fire: "p-fire",
-  public_event: "p-evt",
-  other: "p-acc",
-};
-
+// the frozen domain contract, each mapped to its glyph, marker color, and the severity-border
+// class used on the bottom-sheet rows.
 const CATEGORY_ICON: Record<Category, string> = {
   road_closure: "ic-road",
   accident: "ic-car",
@@ -66,6 +63,12 @@ const STATUS_CHIP: Record<IncidentStatus, { className: string; label: string }> 
   resolved: { className: "st-conf", label: "resuelto" },
 };
 
+// If the MapLibre style/tiles have not signalled a successful load within this window we treat
+// the map as degraded (the "featureless blue field") and offer a retry instead of a blank map.
+const MAP_LOAD_TIMEOUT_MS = 12_000;
+
+type MapStatus = "loading" | "ready" | "error";
+
 function formatDistance(meters: number): string {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
 }
@@ -84,15 +87,13 @@ function formatRelativeTime(iso: string): string {
   return `hace ${Math.floor(hours / 24)} d`;
 }
 
-// The post-login home map: fetches nearby incidents, stays current through its own Realtime
-// channel, and shows every incident because the RPC guarantees lng/lat on each row.
+// The post-login home map: reads the shared current-location lifecycle, fetches nearby
+// incidents, stays current through its own Realtime channel, and clusters markers so dense
+// areas stay legible. Style/tile failures surface a Spanish error with retry.
 export default function IncidentMap() {
   const mapRef = useRef<MapRef | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
-  const [center, setCenter] = useState({
-    lat: config.defaultLat,
-    long: config.defaultLng,
-  });
+  const location = useCurrentLocation();
   const [incidents, setIncidents] = useState<NearbyIncident[]>([]);
   const [newIds, setNewIds] = useState<ReadonlySet<string>>(new Set());
   const knownIdsRef = useRef<Set<string> | null>(null);
@@ -104,9 +105,23 @@ export default function IncidentMap() {
   const sheetPointerStartY = useRef<number | null>(null);
   const sheetDragDistance = useRef(0);
 
+  // Map render lifecycle: status + a key that forces a fresh mount when the user retries.
+  const [mapStatus, setMapStatus] = useState<MapStatus>("loading");
+  const [mapKey, setMapKey] = useState(0);
+  // Viewport, sampled on load and after each move, drives clustering.
+  const [mapBounds, setMapBounds] = useState<[number, number, number, number] | null>(null);
+  const [mapZoom, setMapZoom] = useState(config.defaultZoom);
+
+  // Monotonic request id so a slower default-coordinate response cannot overwrite a newer
+  // GPS one, and Realtime refetches always reflect the latest coordinates.
+  const requestId = useRef(0);
+  const refreshRef = useRef<() => void>(() => undefined);
+
   const refresh = useCallback(async () => {
+    const id = ++requestId.current;
     try {
-      const rows = await getNearbyIncidents({ lat: center.lat, long: center.long });
+      const rows = await getNearbyIncidents({ lat: location.lat, long: location.long });
+      if (id !== requestId.current) return; // superseded by a newer query
       setIncidents(rows);
 
       // A pin that arrives after the first load "drops" with a ripple for a few seconds,
@@ -119,7 +134,7 @@ export default function IncidentMap() {
           setTimeout(() => {
             setNewIds((previous) => {
               const next = new Set(previous);
-              fresh.forEach((id) => next.delete(id));
+              fresh.forEach((freshId) => next.delete(freshId));
               return next;
             });
           }, 8000);
@@ -129,37 +144,39 @@ export default function IncidentMap() {
     } catch {
       // Keep the last successful map state when connectivity is temporarily unavailable.
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
-  }, [center.lat, center.long]);
+  }, [location.lat, location.long]);
 
+  // Refetch whenever the resolved location changes.
   useEffect(() => {
-    navigator.geolocation?.getCurrentPosition(
-      (position) => {
-        const nextCenter = {
-          lat: position.coords.latitude,
-          long: position.coords.longitude,
-        };
-        setCenter(nextCenter);
-        mapRef.current?.flyTo({
-          center: [nextCenter.long, nextCenter.lat],
-          zoom: config.defaultZoom,
-        });
-      },
-      () => {
-        // The configured venue remains the useful fallback if location access is denied.
-      },
-    );
-  }, []);
-
-  useEffect(() => {
+    refreshRef.current = () => void refresh();
     void refresh();
-    const channel = subscribeToIncidents(() => void refresh());
+  }, [refresh]);
 
+  // Subscribe once; realtime changes refetch against the latest coordinates via the ref.
+  useEffect(() => {
+    const channel = subscribeToIncidents(() => refreshRef.current());
     return () => {
       void channel.unsubscribe();
     };
-  }, [refresh]);
+  }, []);
+
+  // Recenter the map when the resolved location changes (e.g. GPS resolves or the user moves).
+  useEffect(() => {
+    mapRef.current?.flyTo({
+      center: [location.long, location.lat],
+      zoom: config.defaultZoom,
+      duration: 600,
+    });
+  }, [location.lat, location.long]);
+
+  // Guard against a degraded style/tile load that never fires `load` (blank blue map).
+  useEffect(() => {
+    if (mapStatus !== "loading") return;
+    const timer = setTimeout(() => setMapStatus("error"), MAP_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [mapStatus, mapKey]);
 
   // The mic FAB floats just above whichever bottom sheet is mounted; measuring keeps it
   // clear of the sheet regardless of how many incident rows render.
@@ -167,8 +184,65 @@ export default function IncidentMap() {
     setSheetHeight(sheetRef.current?.offsetHeight ?? 0);
   }, [incidents, loading, selectedIncidentId, sheetHidden]);
 
+  const clusterIndex = useMemo(() => {
+    const index = new Supercluster({ radius: 64, maxZoom: 16, minPoints: 2 });
+    index.load(
+      incidents.map((incident) => ({
+        type: "Feature" as const,
+        properties: { incidentId: incident.id },
+        geometry: {
+          type: "Point" as const,
+          coordinates: [incident.lng, incident.lat] as [number, number],
+        },
+      })),
+    );
+    return index;
+  }, [incidents]);
+
+  const incidentsById = useMemo(
+    () => new Map(incidents.map((incident) => [incident.id, incident] as const)),
+    [incidents],
+  );
+
+  const clusters = useMemo(() => {
+    if (!mapBounds) return [];
+    return clusterIndex.getClusters(mapBounds, Math.round(mapZoom));
+  }, [clusterIndex, mapBounds, mapZoom]);
+
+  const syncViewport = useCallback((map: MapRef) => {
+    const bounds = map.getBounds();
+    setMapBounds([bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]);
+    setMapZoom(map.getZoom());
+  }, []);
+
+  function retryMap(): void {
+    setMapStatus("loading");
+    setMapBounds(null);
+    setMapKey((key) => key + 1);
+  }
+
+  function expandCluster(clusterId: number, lng: number, lat: number): void {
+    const zoom = Math.min(clusterIndex.getClusterExpansionZoom(clusterId), 18);
+    mapRef.current?.flyTo({ center: [lng, lat], zoom, duration: 500 });
+  }
+
   const activeCount = incidents.length;
   const fabBottom = sheetHidden ? 24 : Math.max(24, sheetHeight - sheetDragY + 16);
+
+  // Banner reflects the same resolved location the map and query use: real fixes read neutral,
+  // the configured venue appears only while the explicit fallback is active.
+  const bannerName =
+    location.source === "gps"
+      ? "Tu ubicación"
+      : location.source === "resolving"
+        ? "Ubicando…"
+        : config.venueName;
+  const bannerSub =
+    location.source === "gps"
+      ? `Radio de búsqueda ${formatRadius(config.defaultRadiusMeters)}`
+      : location.source === "resolving"
+        ? "Buscando tu ubicación…"
+        : `${config.venueCity} · radio ${formatRadius(config.defaultRadiusMeters)}`;
 
   function releaseSheetHandle(): void {
     const shouldHide = sheetDragDistance.current > (sheetRef.current?.offsetHeight ?? 0) / 4;
@@ -193,18 +267,30 @@ export default function IncidentMap() {
 
   return (
     <section className="s-map" aria-label="Mapa de incidentes">
-      <Map
+      <MapGL
+        // A fresh mount per retry re-fetches the style/tiles cleanly; map reuse is intentionally
+        // off so a pooled instance in a bad WebGL/style state can never resurface as a blank map.
+        key={mapKey}
         ref={mapRef}
-        reuseMaps
         mapStyle={config.mapStyleUrl}
         initialViewState={{
-          latitude: center.lat,
-          longitude: center.long,
+          latitude: location.lat,
+          longitude: location.long,
           zoom: config.defaultZoom,
         }}
         style={{ position: "absolute", inset: 0 }}
+        onLoad={(event) => {
+          setMapStatus("ready");
+          syncViewport(event.target as unknown as MapRef);
+        }}
+        onError={() => {
+          // Only escalate failures that happen before the first successful render; transient
+          // tile errors after load must not blank an otherwise-working map.
+          setMapStatus((status) => (status === "ready" ? status : "error"));
+        }}
+        onMoveEnd={(event) => syncViewport(event.target as unknown as MapRef)}
       >
-        <Marker latitude={center.lat} longitude={center.long} anchor="center">
+        <Marker latitude={location.lat} longitude={location.long} anchor="center">
           <span
             className="me"
             aria-label="Tu ubicación"
@@ -217,41 +303,84 @@ export default function IncidentMap() {
           </span>
         </Marker>
 
-        {incidents.map((incident) => (
-          <Marker
-            key={incident.id}
-            latitude={incident.lat}
-            longitude={incident.lng}
-            anchor="bottom"
-            onClick={(event) => {
-              event.originalEvent.stopPropagation();
-              setSelectedIncidentId(incident.id);
-            }}
-          >
-            <span
-              className={`pin ${CATEGORY_PIN[incident.category]}${
-                newIds.has(incident.id) ? " new" : ""
-              }`}
-              aria-label={`${CATEGORY_LABEL[incident.category]}, severidad ${incident.severity}`}
-              style={{
-                // display:block for the same reason as the location dot: inline spans
-                // collapse to 0×0 inside the Marker wrapper.
-                display: "block",
-                position: "relative",
-                transform: "rotate(45deg)",
-                cursor: "pointer",
-                // The mockup's drop keyframes re-anchor via translate, which fights the
-                // Marker transform; keep only the <b> ripple on the pin itself.
-                animation: "none",
-              }}
-            >
-              {newIds.has(incident.id) ? (
-                <b style={{ borderColor: CATEGORY_COLOR[incident.category] }} />
-              ) : null}
-            </span>
-          </Marker>
-        ))}
-      </Map>
+        {clusters.map((feature) => {
+          const [lng, lat] = feature.geometry.coordinates;
+          const properties = feature.properties as Supercluster.AnyProps;
+
+          if (properties.cluster) {
+            const clusterId = properties.cluster_id as number;
+            const count = properties.point_count as number;
+            return (
+              <Marker key={`cluster-${clusterId}`} latitude={lat} longitude={lng} anchor="center">
+                <button
+                  type="button"
+                  className="imk-cluster"
+                  aria-label={`${count} incidentes en esta zona. Acercar para ver el detalle.`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    expandCluster(clusterId, lng, lat);
+                  }}
+                >
+                  {count}
+                </button>
+              </Marker>
+            );
+          }
+
+          const incident = incidentsById.get(properties.incidentId as string);
+          if (!incident) return null;
+          const isNew = newIds.has(incident.id);
+          const isSelected = selectedIncidentId === incident.id;
+          const isHighSeverity = incident.severity >= config.alertMinSeverity;
+
+          return (
+            <Marker key={incident.id} latitude={incident.lat} longitude={incident.lng} anchor="center">
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`${CATEGORY_LABEL[incident.category]}, severidad ${incident.severity} de 5`}
+                className={`imk${isSelected ? " sel" : ""}${isNew ? " new" : ""}${
+                  isHighSeverity ? " sev-hi" : ""
+                }`}
+                style={{ "--mk": CATEGORY_COLOR[incident.category] } as CSSProperties}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedIncidentId(incident.id);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedIncidentId(incident.id);
+                  }
+                }}
+              >
+                <span className="imk-disc">
+                  <Icon name={CATEGORY_ICON[incident.category]} />
+                </span>
+                <span className="imk-sev">{incident.severity}</span>
+              </span>
+            </Marker>
+          );
+        })}
+      </MapGL>
+
+      {mapStatus === "loading" ? (
+        <div className="map-note" role="status">
+          <span className="map-spin" aria-hidden="true" />
+          Cargando mapa…
+        </div>
+      ) : null}
+
+      {mapStatus === "error" ? (
+        <div className="map-fallback" role="alert">
+          <Icon name="ic-map" />
+          <h4>No pudimos cargar el mapa</h4>
+          <p>Revisa tu conexión e inténtalo de nuevo. Los incidentes cercanos siguen disponibles abajo.</p>
+          <button type="button" className="btn primary sm" style={{ width: "auto", padding: "10px 18px" }} onClick={retryMap}>
+            Reintentar
+          </button>
+        </div>
+      ) : null}
 
       {!selectedIncidentId ? (
         <>
@@ -259,10 +388,8 @@ export default function IncidentMap() {
             <div className="sector">
               <Icon name="ic-pin" />
               <div>
-                <div className="nm">{config.venueName}</div>
-                <div className="sub">
-                  {config.venueCity} · {formatRadius(config.defaultRadiusMeters)}
-                </div>
+                <div className="nm">{bannerName}</div>
+                <div className="sub">{bannerSub}</div>
               </div>
               <Icon name="ic-chevron" className="chev" />
             </div>
@@ -391,7 +518,7 @@ export default function IncidentMap() {
         <IncidentDetailSheet
           incidentId={selectedIncidentId}
           onClose={() => setSelectedIncidentId(null)}
-          viewer={center}
+          viewer={{ lat: location.lat, long: location.long }}
         />
       ) : null}
     </section>
