@@ -73,6 +73,12 @@ export default function RealtimeAssistant({
   const generation = useRef(0);
   const nextExchangeId = useRef(0);
   const currentExchangeId = useRef<number | null>(null);
+  // The exchange a tool call belongs to, captured when the call starts so a late result (the
+  // POST resolves after the user began a new turn) still attaches to its origin (issue #10).
+  const toolCallExchangeId = useRef<number | null>(null);
+  // The exchange that already rendered a fallback error bubble, so one failed exchange shows at
+  // most one bubble no matter how many error events arrive (issue #10).
+  const erroredExchangeId = useRef<number | null>(null);
   const exchangeBusyRef = useRef(false);
   const [exchangeBusy, setExchangeBusy] = useState(false);
   const voiceTurnActiveRef = useRef(false);
@@ -242,6 +248,9 @@ export default function RealtimeAssistant({
           },
           onToolCall: (name) => {
             if (generation.current !== sessionGeneration) return;
+            // Bind this tool call to the current exchange so its (async) result lands here
+            // even if the user starts another turn meanwhile (issue #10).
+            toolCallExchangeId.current = currentExchangeId.current;
             addTurn({
               kind: "text",
               role: "tool",
@@ -252,6 +261,9 @@ export default function RealtimeAssistant({
           // are enriched through the browser RPC before the map receives them.
           onToolResult: (name, result, toolArgs) => {
             if (generation.current !== sessionGeneration) return;
+            // Attach to the exchange the tool call originated in (issue #10).
+            const boundExchangeId =
+              toolCallExchangeId.current ?? currentExchangeId.current;
             const envelope =
               typeof result === "object" && result !== null
                 ? (result as Record<string, unknown>)
@@ -268,7 +280,7 @@ export default function RealtimeAssistant({
                   ? [(incident as Record<string, unknown>).id as string]
                   : [],
               );
-              const exchangeId = currentExchangeId.current;
+              const exchangeId = boundExchangeId;
               if (exchangeId !== null && incidentIds.length > 0) {
                 const radiusMeters =
                   typeof toolArgs.radius_meters === "number" &&
@@ -334,16 +346,24 @@ export default function RealtimeAssistant({
               envelope.found === true &&
               isAssistantIncidentDetails(envelope.incident)
             ) {
-              addTurn({ kind: "detail", details: envelope.incident });
+              addTurn({ kind: "detail", details: envelope.incident }, boundExchangeId ?? undefined);
             }
           },
-          onError: () => {
+          onError: (message) => {
             if (generation.current !== sessionGeneration) return;
+            // One failed exchange renders at most one fallback bubble (issue #10).
+            if (
+              currentExchangeId.current !== null &&
+              erroredExchangeId.current === currentExchangeId.current
+            ) {
+              return;
+            }
             addTurn({
               kind: "text",
               role: "agent",
-              text: "No pude completar esa respuesta. Intenta de nuevo.",
+              text: message || "No pude completar esa respuesta. Intenta de nuevo.",
             });
+            erroredExchangeId.current = currentExchangeId.current;
           },
         },
         signal,

@@ -1,5 +1,7 @@
 import { config } from "./config";
 import { supabase } from "./supabase";
+import { hasExplicitConsent } from "./confirm-consent";
+import { ToolError } from "./tool-error";
 
 // The browser bridge for the voice agent "Cerca".
 //
@@ -44,6 +46,20 @@ export interface AssistantHandle {
 const BRIEF_RESPONSE_INSTRUCTIONS =
   "Responde en español de Ecuador con una o dos frases cortas. Prioriza solo lo más urgente o cercano. No enumeres todos los incidentes: el mapa y las tarjetas ya muestran el resto. No repitas información de respuestas anteriores.";
 
+// Safety net (ms) for the input_audio_buffer.commit → committed round-trip. We normally wait
+// for the server to confirm a non-empty commit before creating a response; if neither the
+// confirmation nor an empty-commit error arrives (rare transport hiccup), we proceed anyway so
+// a turn never hangs.
+const COMMIT_CONFIRM_TIMEOUT_MS = 1200;
+
+// The Realtime error code emitted when input_audio_buffer.commit runs on an empty buffer — a
+// silent orb tap. Handled quietly (return to idle) instead of shown as a failure.
+const EMPTY_COMMIT_ERROR_CODE = "input_audio_buffer_commit_empty";
+
+// Upper bound for the processed-call-id and terminated-response-id sets, so a long-lived
+// session cannot grow them without limit. Ids are single-use, so trimming the oldest is safe.
+const LIFECYCLE_ID_CAP = 256;
+
 async function accessToken(): Promise<string> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -72,8 +88,27 @@ async function mintClientSecret(
   return res.json();
 }
 
+// Read the frozen `{ error }` envelope (CONTRACT §4) from a non-2xx response, tolerating a
+// missing or malformed body. The message is for diagnostics only — never surfaced verbatim.
+async function readErrorEnvelope(res: Response): Promise<string | null> {
+  try {
+    const body: unknown = await res.json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { error?: unknown }).error === "string"
+    ) {
+      return (body as { error: string }).error;
+    }
+  } catch {
+    // No JSON body — fall through to null.
+  }
+  return null;
+}
+
 // Execute one tool call against Supabase agent-tools. The user's location is injected here
-// (not by the model). user_id is derived server-side from the JWT.
+// (not by the model). user_id is derived server-side from the JWT. A non-2xx response is
+// turned into a ToolError that preserves the server envelope and status for classification.
 async function runTool(
   toolName: string,
   args: Record<string, unknown>,
@@ -95,8 +130,48 @@ async function runTool(
     }),
     signal,
   });
-  if (!res.ok) throw new Error(`agent-tools (${toolName}) falló: ${res.status}`);
+  if (!res.ok) {
+    throw new ToolError({
+      toolName,
+      status: res.status,
+      serverError: await readErrorEnvelope(res),
+    });
+  }
   return res.json();
+}
+
+// The one Spanish state shown when a tool call fails. Derives from the failure class only.
+function toolFailureMessage(err: unknown): string {
+  if (err instanceof ToolError) return err.userMessage;
+  return "No pude completar esa consulta. Intenta de nuevo.";
+}
+
+// Diagnostic log for a failed tool call. Deliberately excludes credentials and the user's
+// precise coordinates (they live in runTool, never in `args`); keeps the tool name, status,
+// server message, and the arguments needed to tell validation errors apart (CONTRACT §4-5).
+function logToolFailure(
+  toolName: string,
+  args: Record<string, unknown>,
+  err: unknown,
+): void {
+  console.warn("[Cerca] agent-tools call failed", {
+    tool: toolName,
+    status: err instanceof ToolError ? err.status : null,
+    serverError:
+      err instanceof ToolError
+        ? err.serverError
+        : err instanceof Error
+          ? err.message
+          : "error",
+    radius_meters:
+      typeof args.radius_meters === "number" ? args.radius_meters : undefined,
+    filter_category:
+      typeof args.filter_category === "string" ? args.filter_category : undefined,
+    incident_id:
+      typeof args.incident_id === "string" ? args.incident_id : undefined,
+    kind:
+      args.kind === "confirm" || args.kind === "dispute" ? args.kind : undefined,
+  });
 }
 
 
@@ -170,6 +245,8 @@ export async function startRealtimeSession(
     signal?.removeEventListener("abort", abortRequests);
     signal?.removeEventListener("abort", abortSession);
     voiceTurnActive = false;
+    pendingCommitResponse = false;
+    clearCommitFallback();
     mic.getTracks().forEach((track) => track.stop());
     audioEl.srcObject = null;
     dc.onclose = null;
@@ -195,6 +272,22 @@ export async function startRealtimeSession(
   let toolCallsInFlight = 0;
   let toolContinuationPending = false;
   let voiceTurnActive = false;
+  // A voice turn was committed and we are waiting for the server to confirm a non-empty audio
+  // buffer before creating a response (issue #10). Blocks other activity during the wait.
+  let pendingCommitResponse = false;
+  let commitFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  // The response currently being generated, and responses that were cancelled/failed/incomplete.
+  // Output and tool events from a terminated response are ignored so a superseded turn can never
+  // execute tools, speak, or attach late output to a newer exchange (issue #10).
+  let activeResponseId: string | null = null;
+  const terminatedResponseIds = new Set<string>();
+  // Function calls are processed once, keyed by call_id, so a replayed or duplicated event can
+  // never POST a second time (issues #11 and #10). Bounded: trimmed if a session runs long.
+  const processedCallIds = new Set<string>();
+  // The user's words in the CURRENT exchange — the consent signal that gates the mutating
+  // confirm_incident tool (issue #11). Reset when a new turn begins; set from the voice
+  // transcript or a typed question. A tool call with no matching intent here is withheld.
+  let currentTurnUserText: string | null = null;
 
   function disableMicrophone() {
     micTracks.forEach((track) => {
@@ -208,6 +301,7 @@ export async function startRealtimeSession(
       responseActive ||
       outputAudioActive ||
       voiceTurnActive ||
+      pendingCommitResponse ||
       toolCallsInFlight > 0 ||
       toolContinuationPending
     ) {
@@ -229,6 +323,51 @@ export async function startRealtimeSession(
     );
   }
 
+  function clearCommitFallback() {
+    if (commitFallbackTimer !== null) {
+      clearTimeout(commitFallbackTimer);
+      commitFallbackTimer = null;
+    }
+  }
+
+  // After a commit we wait for input_audio_buffer.committed before creating a response, so an
+  // empty (silent) commit produces no answer. A timer guards against a lost confirmation.
+  function beginPendingCommit() {
+    pendingCommitResponse = true;
+    callbacks.onStatus?.("speaking");
+    clearCommitFallback();
+    commitFallbackTimer = setTimeout(() => {
+      commitFallbackTimer = null;
+      resolvePendingCommit(true);
+    }, COMMIT_CONFIRM_TIMEOUT_MS);
+  }
+
+  // Confirmed non-empty commit → create the response; empty-commit error or a new turn → drop
+  // it and return to idle. Idempotent: only the first resolution for a pending commit acts.
+  function resolvePendingCommit(create: boolean) {
+    if (!pendingCommitResponse) return;
+    pendingCommitResponse = false;
+    clearCommitFallback();
+    if (create) {
+      createBriefResponse();
+    } else {
+      restoreReadyWhenIdle();
+    }
+  }
+
+  function rememberTerminatedResponse(responseId: string | null) {
+    if (!responseId) return;
+    terminatedResponseIds.add(responseId);
+    if (terminatedResponseIds.size > LIFECYCLE_ID_CAP) {
+      const oldest = terminatedResponseIds.values().next().value;
+      if (oldest !== undefined) terminatedResponseIds.delete(oldest);
+    }
+  }
+
+  function isFromTerminatedResponse(responseId?: string): boolean {
+    return typeof responseId === "string" && terminatedResponseIds.has(responseId);
+  }
+
   function startVoiceTurn(): boolean {
     if (
       !sessionConfigured ||
@@ -243,14 +382,24 @@ export async function startRealtimeSession(
     dc.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
     if (responseActive) {
       dc.send(JSON.stringify({ type: "response.cancel" }));
+      // The response we just cancelled must not run tools or attach late output to this
+      // newer turn (issue #10).
+      rememberTerminatedResponse(activeResponseId);
     }
     if (outputAudioActive) {
       dc.send(JSON.stringify({ type: "output_audio_buffer.clear" }));
     }
+    // A commit awaiting confirmation belongs to the turn being superseded — drop it.
+    pendingCommitResponse = false;
+    clearCommitFallback();
 
     responseActive = false;
     outputAudioActive = false;
+    activeResponseId = null;
     voiceTurnActive = true;
+    // A fresh turn starts with no captured user words: silence must not inherit consent
+    // from a previous exchange (issue #11).
+    currentTurnUserText = null;
     micTracks.forEach((track) => {
       if (track.readyState === "live") track.enabled = true;
     });
@@ -266,11 +415,16 @@ export async function startRealtimeSession(
     if (dc.readyState !== "open") return false;
 
     dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-    createBriefResponse();
+    // Do NOT create a response yet: wait for input_audio_buffer.committed to confirm the
+    // buffer was non-empty, so a silent tap yields no empty-audio error or answer (issue #10).
+    beginPendingCommit();
     return true;
   }
 
   function sendUserText(text: string) {
+    // A typed question is this turn's user input (suggestion chips included). It rarely
+    // carries confirm/dispute intent, so it also correctly withholds confirm_incident.
+    currentTurnUserText = text;
     dc.send(
       JSON.stringify({
         type: "conversation.item.create",
@@ -292,6 +446,7 @@ export async function startRealtimeSession(
       responseActive ||
       outputAudioActive ||
       voiceTurnActive ||
+      pendingCommitResponse ||
       dc.readyState !== "open"
     ) {
       return;
@@ -300,12 +455,23 @@ export async function startRealtimeSession(
     createBriefResponse();
   }
 
+  // confirm_incident only proceeds when the current turn's words express a matching intent
+  // (issue #11). An unknown kind passes here so the server validates it (issue #12 path).
+  function confirmConsentGranted(args: Record<string, unknown>): boolean {
+    const kind = args.kind;
+    if (kind === "confirm" || kind === "dispute") {
+      return hasExplicitConsent(currentTurnUserText, kind);
+    }
+    return true;
+  }
+
   function flushPendingText() {
     if (
       !sessionConfigured ||
       responseActive ||
       outputAudioActive ||
       voiceTurnActive ||
+      pendingCommitResponse ||
       toolCallsInFlight > 0 ||
       toolContinuationPending ||
       dc.readyState !== "open"
@@ -356,9 +522,11 @@ export async function startRealtimeSession(
       name?: string;
       arguments?: string;
       call_id?: string;
+      response_id?: string;
       transcript?: string;
-      error?: { message?: string };
+      error?: { message?: string; code?: string };
       response?: {
+        id?: string;
         status?: string;
         status_details?: { error?: { message?: string } };
       };
@@ -378,8 +546,15 @@ export async function startRealtimeSession(
       return;
     }
 
+    // A confirmed non-empty commit: only now do we create the response for this turn (#10).
+    if (msg.type === "input_audio_buffer.committed") {
+      resolvePendingCommit(true);
+      return;
+    }
+
     if (msg.type === "response.created") {
       responseActive = true;
+      activeResponseId = msg.response?.id ?? null;
       if (!voiceTurnActive) {
         disableMicrophone();
         callbacks.onStatus?.("speaking");
@@ -410,15 +585,27 @@ export async function startRealtimeSession(
       msg.type === "response.failed"
     ) {
       responseActive = false;
+      const endedResponseId = msg.response?.id ?? activeResponseId;
+      const failedOrIncomplete =
+        msg.type === "response.cancelled" ||
+        msg.type === "response.failed" ||
+        (msg.type === "response.done" &&
+          (msg.response?.status === "failed" ||
+            msg.response?.status === "incomplete"));
+      if (failedOrIncomplete) {
+        // A cancelled/failed/incomplete response must not run late tools or continue (#10).
+        rememberTerminatedResponse(endedResponseId);
+      }
+      if (endedResponseId === activeResponseId) activeResponseId = null;
       if (
         msg.type === "response.done" &&
         (msg.response?.status === "failed" ||
           msg.response?.status === "incomplete")
       ) {
-        callbacks.onError?.(
-          msg.response.status_details?.error?.message ??
-            "La respuesta de Cerca quedó incompleta",
-        );
+        if (msg.response.status_details?.error?.message) {
+          console.warn("[Cerca] response ended", { status: msg.response.status });
+        }
+        callbacks.onError?.("La respuesta de Cerca quedó incompleta. Intenta de nuevo.");
       }
       createToolContinuationWhenReady();
       restoreReadyWhenIdle();
@@ -427,18 +614,31 @@ export async function startRealtimeSession(
     }
     if (msg.type === "error") {
       if (!sessionConfigured) {
-        callbacks.onError?.(
-          msg.error?.message ?? "No se pudo configurar la sesión de voz",
-        );
+        if (msg.error?.message) {
+          console.warn("[Cerca] realtime session error", { code: msg.error.code });
+        }
+        callbacks.onError?.("No se pudo iniciar la sesión de voz. Intenta de nuevo.");
         cleanup(true);
         return;
+      }
+      // A silent orb tap commits an empty buffer: return to idle quietly, with no error
+      // bubble and no response (issue #10).
+      if (msg.error?.code === EMPTY_COMMIT_ERROR_CODE) {
+        resolvePendingCommit(false);
+        flushPendingText();
+        return;
+      }
+      if (msg.error?.message) {
+        console.warn("[Cerca] realtime session error", { code: msg.error.code });
       }
       responseActive = false;
       outputAudioActive = false;
       voiceTurnActive = false;
+      pendingCommitResponse = false;
+      clearCommitFallback();
       disableMicrophone();
       restoreReadyWhenIdle();
-      callbacks.onError?.(msg.error?.message ?? "error de la sesión de voz");
+      callbacks.onError?.("Se interrumpió la sesión de voz. Intenta de nuevo.");
       flushPendingText();
       return;
     }
@@ -450,6 +650,9 @@ export async function startRealtimeSession(
         msg.type === "response.audio_transcript.done") &&
       msg.transcript
     ) {
+      // Drop a late transcript from a superseded response so it can't attach to a newer
+      // exchange (issue #10).
+      if (isFromTerminatedResponse(msg.response_id)) return;
       callbacks.onAgentTranscript?.(msg.transcript);
       return;
     }
@@ -457,6 +660,8 @@ export async function startRealtimeSession(
       msg.type === "conversation.item.input_audio_transcription.completed" &&
       msg.transcript
     ) {
+      // This is what the user actually said this turn: the consent signal for confirm_incident.
+      currentTurnUserText = msg.transcript;
       callbacks.onUserTranscript?.(msg.transcript);
       return;
     }
@@ -467,7 +672,20 @@ export async function startRealtimeSession(
       msg.name &&
       msg.call_id
     ) {
-      callbacks.onToolCall?.(msg.name);
+      // A tool call from a cancelled/failed response must not execute (issue #10).
+      if (isFromTerminatedResponse(msg.response_id)) return;
+      // Process each call_id at most once: a replayed or duplicated event must never POST
+      // a second time or start a second continuation (issues #11 and #10).
+      if (processedCallIds.has(msg.call_id)) return;
+      processedCallIds.add(msg.call_id);
+      if (processedCallIds.size > LIFECYCLE_ID_CAP) {
+        const oldest = processedCallIds.values().next().value;
+        if (oldest !== undefined) processedCallIds.delete(oldest);
+      }
+
+      const toolName = msg.name;
+      const callId = msg.call_id;
+      callbacks.onToolCall?.(toolName);
       toolCallsInFlight += 1;
       toolContinuationPending = true;
       let output: unknown;
@@ -484,15 +702,37 @@ export async function startRealtimeSession(
           throw new Error("Los argumentos de la herramienta no son válidos");
         }
         parsedArgs = parsed as Record<string, unknown>;
-        output = await runTool(
-          msg.name,
-          parsedArgs,
-          location,
-          requestController.signal,
-        );
-        callbacks.onToolResult?.(msg.name, output, parsedArgs);
+        if (toolName === "confirm_incident" && !confirmConsentGranted(parsedArgs)) {
+          // Not a failure: withhold the vote and let Cerca continue by asking for an
+          // explicit confirm/dispute. Nothing is registered until the user is clear.
+          output = {
+            ok: false,
+            needs_confirmation: true,
+            message:
+              "No registres la valoración: pide a la persona que confirme o dispute de forma explícita en su turno actual antes de usar esta herramienta.",
+          };
+        } else {
+          output = await runTool(
+            toolName,
+            parsedArgs,
+            location,
+            requestController.signal,
+          );
+          callbacks.onToolResult?.(toolName, output, parsedArgs);
+        }
       } catch (err) {
-        output = { error: String(err) };
+        // A failed tool call must not continue into a confirmation or a normal answer:
+        // report it once, log a redacted diagnostic, and hand the model a plain error
+        // output so it does not treat the failure as data (issue #12).
+        toolContinuationPending = false;
+        logToolFailure(toolName, parsedArgs, err);
+        callbacks.onError?.(toolFailureMessage(err));
+        output = {
+          error:
+            err instanceof ToolError
+              ? (err.serverError ?? `HTTP ${err.status}`)
+              : "tool_call_failed",
+        };
       }
       try {
         dc.send(
@@ -500,14 +740,17 @@ export async function startRealtimeSession(
             type: "conversation.item.create",
             item: {
               type: "function_call_output",
-              call_id: msg.call_id,
+              call_id: callId,
               output: JSON.stringify(output),
             },
           }),
         );
       } finally {
         toolCallsInFlight -= 1;
+        // Only a successful call keeps toolContinuationPending; on failure this is a no-op
+        // and we simply return to idle instead of speaking a phantom answer.
         createToolContinuationWhenReady();
+        restoreReadyWhenIdle();
       }
     }
   };
@@ -558,6 +801,7 @@ export async function startRealtimeSession(
         !responseActive &&
         !outputAudioActive &&
         !voiceTurnActive &&
+        !pendingCommitResponse &&
         toolCallsInFlight === 0 &&
         !toolContinuationPending
       ) {

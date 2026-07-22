@@ -1,9 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import type { Category, IncidentStatus } from "@pulso/core";
-import { config, type AssistantIncidentDetails } from "@/lib";
+import {
+  config,
+  getIncidentDetails,
+  type AssistantIncidentDetails,
+  type AssistantLocation,
+} from "@/lib";
 import Icon from "./Icon";
+import AssistantIncidentDetailMap from "./AssistantIncidentDetailMap";
+import IncidentDetailSheet from "./IncidentDetailSheet";
 
 const CATEGORY_LABEL: Record<Category, string> = {
   road_closure: "Cierre vial",
@@ -49,13 +57,46 @@ function formatRelativeTime(iso: string): string {
   return `hace ${Math.floor(hours / 24)} d`;
 }
 
-// Rich detail card the voice conversation shows when Cerca calls get_incident_details:
-// the report photo (when one exists) plus the trust evidence behind the spoken answer.
+// Rich detail card the voice conversation shows when Cerca calls get_incident_details: an
+// interactive map at the reported coordinates, the report photo, the key case metadata and
+// description, and an action to open the full case detail (issue #4). The speak-ready tool
+// envelope omits coordinates, so they are fetched through the same public incident RPC the
+// rest of the app uses; every optional piece (map, photo, description) degrades gracefully.
 export default function AssistantIncidentDetailCard({
   details,
+  location = null,
+  showMap = true,
 }: {
   details: AssistantIncidentDetails;
+  /** Viewer location, forwarded to the full-detail sheet to show distance. */
+  location?: AssistantLocation | null;
+  /** Suppressed inside the collapsed history so old exchanges do not mount maps. */
+  showMap?: boolean;
 }) {
+  const [coordinates, setCoordinates] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  useEffect(() => {
+    if (!showMap) return;
+    let active = true;
+    void getIncidentDetails(details.id)
+      .then((incident) => {
+        if (!active || !incident) return;
+        if (Number.isFinite(incident.lat) && Number.isFinite(incident.lng)) {
+          setCoordinates({ lat: incident.lat, lng: incident.lng });
+        }
+      })
+      .catch(() => {
+        // Coordinates are optional: the card simply renders without the map.
+      });
+    return () => {
+      active = false;
+    };
+  }, [details.id, showMap]);
+
   const status = STATUS_CHIP[details.status];
   const photoUrl = details.photo_path
     ? `${config.photosBaseUrl}/${details.photo_path}`
@@ -63,6 +104,14 @@ export default function AssistantIncidentDetailCard({
 
   return (
     <div className="icard" aria-label={`Detalle del incidente: ${details.title}`}>
+      {showMap && coordinates ? (
+        <AssistantIncidentDetailMap
+          category={details.category}
+          latitude={coordinates.lat}
+          longitude={coordinates.lng}
+          title={details.title}
+        />
+      ) : null}
       {photoUrl ? (
         <div className="ph">
           <Image
@@ -96,8 +145,27 @@ export default function AssistantIncidentDetailCard({
               <span className="status st-conf">reporte verificado</span>
             ) : null}
           </div>
+          {details.description ? (
+            <p className="desc">{details.description}</p>
+          ) : null}
+          <button
+            type="button"
+            className="det-link"
+            onClick={() => setDetailOpen(true)}
+          >
+            Ver detalle completo
+            <Icon name="ic-chevron" style={{ width: 14, height: 14 }} />
+          </button>
         </div>
       </div>
+
+      {detailOpen ? (
+        <IncidentDetailSheet
+          incidentId={details.id}
+          onClose={() => setDetailOpen(false)}
+          viewer={location}
+        />
+      ) : null}
     </div>
   );
 }

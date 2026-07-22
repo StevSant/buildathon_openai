@@ -1,0 +1,168 @@
+# Review package: e6c5ad0..HEAD
+
+## Commits
+40f3166 perf(frontend): optimize incident photos
+
+## Files changed
+ frontend/app/globals.css                            |  2 +-
+ frontend/components/AssistantIncidentDetailCard.tsx |  8 +++++++-
+ frontend/components/IncidentDetailSheet.tsx         |  8 +++++++-
+ frontend/next.config.mjs                            | 15 +++++++++++++++
+ 4 files changed, 30 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/frontend/app/globals.css b/frontend/app/globals.css
+index 7ca08a8..3b48c55 100644
+--- a/frontend/app/globals.css
++++ b/frontend/app/globals.css
+@@ -228,21 +228,21 @@ body {
+ .bubble { max-width: 88%; padding: 9px 12px; border-radius: 14px; font-size: 12.5px; }
+ .bubble.u { align-self: flex-end; background: var(--panel-3); border-bottom-right-radius: 5px; }
+ .bubble.a { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+ .toolcall { align-self: flex-start; font: 600 10.5px/1.3 var(--mono); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 9px; padding: 6px 9px; }
+ .toolcall b { color: var(--ink); font-weight: 700; }
+ .suggs { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 10px; }
+ .suggs button { appearance: none; cursor: pointer; font: 600 11.5px/1.2 var(--sans); color: var(--ink); padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); }
+ .suggs button:active { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--accent); }
+ .suggs button:disabled { opacity: 0.45; cursor: default; }
+ .icard { align-self: flex-start; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 2px 11px; }
+-.icard .ph { height: 110px; border-radius: 10px; overflow: hidden; margin: 9px 0 3px; }
++.icard .ph { position: relative; height: 110px; border-radius: 10px; overflow: hidden; margin: 9px 0 3px; }
+ .icard .ph img { width: 100%; height: 100%; object-fit: cover; }
+ .icard .more { font: 600 10.5px/1 var(--mono); color: var(--muted); padding: 9px 0 10px; border-top: 1px solid var(--line); text-align: center; }
+ .assistant-conversation { display: flex; flex-direction: column; gap: 8px; }
+ .assistant-turn-list { display: flex; flex-direction: column; gap: 8px; }
+ .assistant-nearby-result { display: flex; flex-direction: column; gap: 8px; }
+ .assistant-history { border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel) 74%, transparent); overflow: hidden; }
+ .assistant-history summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; color: var(--muted); font: 600 11px/1.2 var(--sans); }
+ .assistant-history summary::-webkit-details-marker { display: none; }
+ .assistant-history summary::before { content: "›"; color: var(--accent); font: 700 16px/1 var(--mono); transition: transform 0.15s ease; }
+ .assistant-history[open] summary::before { transform: rotate(90deg); }
+diff --git a/frontend/components/AssistantIncidentDetailCard.tsx b/frontend/components/AssistantIncidentDetailCard.tsx
+index 8af083e..accb2b5 100644
+--- a/frontend/components/AssistantIncidentDetailCard.tsx
++++ b/frontend/components/AssistantIncidentDetailCard.tsx
+@@ -1,12 +1,13 @@
+ "use client";
+ 
++import Image from "next/image";
+ import type { Category, IncidentStatus } from "@pulso/core";
+ import { config, type AssistantIncidentDetails } from "@/lib";
+ import Icon from "./Icon";
+ 
+ const CATEGORY_LABEL: Record<Category, string> = {
+   road_closure: "Cierre vial",
+   accident: "Accidente",
+   flood: "Inundación",
+   fire: "Incendio",
+   public_event: "Evento público",
+@@ -57,21 +58,26 @@ export default function AssistantIncidentDetailCard({
+ }) {
+   const status = STATUS_CHIP[details.status];
+   const photoUrl = details.photo_path
+     ? `${config.photosBaseUrl}/${details.photo_path}`
+     : null;
+ 
+   return (
+     <div className="icard" aria-label={`Detalle del incidente: ${details.title}`}>
+       {photoUrl ? (
+         <div className="ph">
+-          <img src={photoUrl} alt={`Foto del reporte: ${details.title}`} />
++          <Image
++            src={photoUrl}
++            alt={`Foto del reporte: ${details.title}`}
++            fill
++            sizes="(max-width: 640px) calc(100vw - 52px), 588px"
++          />
+         </div>
+       ) : null}
+       <div className="inc" style={{ borderLeftColor: CATEGORY_COLOR[details.category] }}>
+         <span className="ic">
+           <Icon
+             name={CATEGORY_ICON[details.category]}
+             style={{ color: CATEGORY_COLOR[details.category] }}
+           />
+         </span>
+         <div className="body">
+diff --git a/frontend/components/IncidentDetailSheet.tsx b/frontend/components/IncidentDetailSheet.tsx
+index 03cac40..0ec636d 100644
+--- a/frontend/components/IncidentDetailSheet.tsx
++++ b/frontend/components/IncidentDetailSheet.tsx
+@@ -1,13 +1,14 @@
+ "use client";
+ 
+ import { useEffect, useState } from "react";
++import Image from "next/image";
+ import type { Category, IncidentDetails, IncidentStatus } from "@pulso/core";
+ import { IncidentComments } from "@/components";
+ import { config, confirmIncident, getIncidentDetails, haversineMeters } from "@/lib";
+ import Icon from "./Icon";
+ 
+ const CATEGORY_LABEL: Record<Category, string> = {
+   road_closure: "Cierre vial",
+   accident: "Accidente",
+   flood: "Inundación",
+   fire: "Incendio",
+@@ -137,21 +138,26 @@ export default function IncidentDetailSheet({
+       <div className="det-scroll">
+         <div className="det-head">
+           <button type="button" className="iconbtn" onClick={onClose} aria-label="Cerrar detalle">
+             <Icon name="ic-back" />
+           </button>
+           <span className="t">Incidente</span>
+         </div>
+ 
+         <div className="det-photo">
+           {photoUrl ? (
+-            <img src={photoUrl} alt="Foto del incidente" />
++            <Image
++              src={photoUrl}
++              alt="Foto del incidente"
++              fill
++              sizes="(max-width: 640px) calc(100vw - 28px), 612px"
++            />
+           ) : (
+             <div className="grain" />
+           )}
+           {details ? (
+             <div className="ov">
+               <span className="chip sev" style={{ background: color }}>
+                 <Icon name={CATEGORY_ICON[details.category]} />
+                 {CATEGORY_LABEL[details.category]}
+               </span>
+               <span className="chip">Severidad {details.severity}</span>
+diff --git a/frontend/next.config.mjs b/frontend/next.config.mjs
+index a4df575..9501323 100644
+--- a/frontend/next.config.mjs
++++ b/frontend/next.config.mjs
+@@ -1,15 +1,30 @@
+ /** @type {import('next').NextConfig} */
++const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
++const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl) : null;
++
+ const nextConfig = {
+   reactStrictMode: true,
+   // core/ ships as TypeScript source shared with the edge functions, so Next transpiles it.
+   transpilePackages: ["@pulso/core"],
++  images: {
++    remotePatterns: supabaseOrigin
++      ? [
++          {
++            protocol: supabaseOrigin.protocol.replace(":", ""),
++            hostname: supabaseOrigin.hostname,
++            port: supabaseOrigin.port,
++            pathname: "/storage/v1/object/public/report-photos/**",
++          },
++        ]
++      : [],
++  },
+ };
+ 
+ // Optional PWA app-shell service worker. Off by default (keeps the hackathon build simple).
+ // To enable: `npm i next-pwa` then swap the export below.
+ //
+ // import withPWA from "next-pwa";
+ // export default withPWA({
+ //   dest: "public",
+ //   register: true,
+ //   disable: process.env.NODE_ENV === "development",

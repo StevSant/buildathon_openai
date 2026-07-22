@@ -55,6 +55,12 @@ export const config = {
   // Report-photo client-side re-encode bounds (longest side in px, JPEG quality 0-1).
   photoMaxDimension: num(process.env.NEXT_PUBLIC_PHOTO_MAX_DIMENSION, 1600),
   photoJpegQuality: num(process.env.NEXT_PUBLIC_PHOTO_JPEG_QUALITY, 0.85),
+  // "Reenviar código" countdown fallback (seconds). The edge function is authoritative and
+  // returns the real cooldown in its response; this only seeds the initial UI countdown.
+  whatsappResendCooldownSeconds: num(
+    process.env.NEXT_PUBLIC_WHATSAPP_RESEND_COOLDOWN_SECONDS,
+    60,
+  ),
 } as const;
 
 export type AppConfig = typeof config;
