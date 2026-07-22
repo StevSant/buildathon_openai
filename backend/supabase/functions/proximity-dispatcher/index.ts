@@ -3,9 +3,13 @@ import {
   SupabaseIncidentRepository,
   SupabaseProfileRepository,
 } from "@pulso/adapters";
-import { makeDispatchProximityAlerts } from "@pulso/core";
+import {
+  evaluateWhatsAppResend,
+  makeDispatchProximityAlerts,
+  type WhatsAppResendPolicy,
+} from "@pulso/core";
 import { corsHeaders } from "../_shared/cors.ts";
-import { getEnv } from "../_shared/env.ts";
+import { getEnv, type EdgeEnv } from "../_shared/env.ts";
 import { createServiceClient } from "../_shared/service-client.ts";
 import { createUserClient } from "../_shared/supabase-client.ts";
 import { hasValidWebhookSecret } from "../_shared/webhook-auth.ts";
@@ -66,23 +70,10 @@ Deno.serve(async (req) => {
     });
     const dispatch = makeDispatchProximityAlerts({ incidents, profiles, messaging });
 
-    // Self opt-in: confirm the user's OWN WhatsApp number (whatsapp_config), not an
-    // emergency contact. Sends the confirmation and marks the number verified (demo path).
+    // Self opt-in: confirm/resend the user's OWN WhatsApp number (whatsapp_config), not an
+    // emergency contact. Server-side rate-limited to curb abuse and messaging cost (issue #6).
     if (body.verifyWhatsapp) {
-      const { data: cfg, error } = await service
-        .from("whatsapp_config")
-        .select("phone_e164")
-        .eq("user_id", ownerId!)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      if (!cfg?.phone_e164) throw new Error("no hay número de WhatsApp configurado");
-
-      const delivery = await messaging.sendWhatsApp({ to: cfg.phone_e164, kind: "optin" });
-      await service.from("whatsapp_config").update({ verified: true }).eq("user_id", ownerId!);
-      return Response.json(
-        { dispatched: delivery.status === "failed" ? 0 : 1 },
-        { headers: corsHeaders },
-      );
+      return await sendWhatsAppVerification(service, messaging, env, ownerId!);
     }
 
     if (body.optin?.contactId) {
@@ -140,6 +131,115 @@ Deno.serve(async (req) => {
     return Response.json({ error: message }, { status, headers: corsHeaders });
   }
 });
+
+// Send (or resend) the user's own-number WhatsApp confirmation, gated by a server-side rate
+// limit. The pure `evaluateWhatsAppResend` rule decides; this function only loads/persists the
+// per-user counters and performs the delivery. No verification code or phone number is ever
+// logged — only the user id, the tripped guard, and the delivery status, for diagnostics.
+async function sendWhatsAppVerification(
+  service: ReturnType<typeof createServiceClient>,
+  messaging: HermesWhatsAppGateway,
+  env: EdgeEnv,
+  ownerId: string,
+): Promise<Response> {
+  const { data: cfg, error: cfgError } = await service
+    .from("whatsapp_config")
+    .select("phone_e164")
+    .eq("user_id", ownerId)
+    .maybeSingle();
+  if (cfgError) throw new Error(cfgError.message);
+  if (!cfg?.phone_e164) throw new Error("no hay número de WhatsApp configurado");
+
+  const { data: attempt, error: attemptError } = await service
+    .from("whatsapp_verification_attempts")
+    .select("window_started_at, send_count, last_sent_at, success_count, fail_count")
+    .eq("user_id", ownerId)
+    .maybeSingle();
+  if (attemptError) throw new Error(attemptError.message);
+
+  const policy: WhatsAppResendPolicy = {
+    cooldownSeconds: env.whatsappResendCooldownSeconds,
+    windowSeconds: env.whatsappResendWindowSeconds,
+    maxSendsPerWindow: env.whatsappResendMaxPerWindow,
+  };
+  const nowMs = Date.now();
+  const decision = evaluateWhatsAppResend(
+    {
+      windowStartedAt: attempt?.window_started_at ? Date.parse(attempt.window_started_at) : null,
+      sendCount: attempt?.send_count ?? 0,
+      lastSentAt: attempt?.last_sent_at ? Date.parse(attempt.last_sent_at) : null,
+    },
+    policy,
+    nowMs,
+  );
+
+  if (!decision.allowed) {
+    console.warn(
+      JSON.stringify({
+        event: "whatsapp_verification_rate_limited",
+        userId: ownerId,
+        retryAfterSeconds: decision.retryAfterSeconds,
+      }),
+    );
+    return Response.json(
+      {
+        error: "Espera unos segundos antes de solicitar otro código.",
+        retryAfterSeconds: decision.retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: { ...corsHeaders, "Retry-After": String(decision.retryAfterSeconds) },
+      },
+    );
+  }
+
+  // The rate-limit slot is consumed for every real attempt, so delivery failures (a Hermes
+  // transport error included) still count against the limit — that is what protects cost.
+  let sent = false;
+  try {
+    const delivery = await messaging.sendWhatsApp({ to: cfg.phone_e164, kind: "optin" });
+    sent = delivery.status !== "failed";
+  } catch (sendError) {
+    console.error(
+      JSON.stringify({
+        event: "whatsapp_verification_delivery_error",
+        userId: ownerId,
+        reason: sendError instanceof Error ? sendError.message : "unknown",
+      }),
+    );
+  }
+
+  const next = decision.nextState;
+  const { error: upsertError } = await service.from("whatsapp_verification_attempts").upsert(
+    {
+      user_id: ownerId,
+      window_started_at: new Date(next.windowStartedAt ?? nowMs).toISOString(),
+      send_count: next.sendCount,
+      last_sent_at: new Date(nowMs).toISOString(),
+      last_status: sent ? "sent" : "failed",
+      success_count: (attempt?.success_count ?? 0) + (sent ? 1 : 0),
+      fail_count: (attempt?.fail_count ?? 0) + (sent ? 0 : 1),
+      updated_at: new Date(nowMs).toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+  if (upsertError) throw new Error(upsertError.message);
+
+  if (sent) {
+    // The latest confirmation supersedes any earlier one; mark the number verified (demo path).
+    await service.from("whatsapp_config").update({ verified: true }).eq("user_id", ownerId);
+    console.info(JSON.stringify({ event: "whatsapp_verification_sent", userId: ownerId }));
+  } else {
+    console.error(
+      JSON.stringify({ event: "whatsapp_verification_delivery_failed", userId: ownerId }),
+    );
+  }
+
+  return Response.json(
+    { dispatched: sent ? 1 : 0, cooldownSeconds: policy.cooldownSeconds },
+    { headers: corsHeaders },
+  );
+}
 
 async function logDispatches(
   service: ReturnType<typeof createServiceClient>,

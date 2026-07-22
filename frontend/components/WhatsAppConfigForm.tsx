@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Icon from "./Icon";
-import { supabase } from "@/lib";
+import { config, supabase } from "@/lib";
 
 type WhatsAppConfig = {
   enabled: boolean;
@@ -10,17 +10,39 @@ type WhatsAppConfig = {
   verified: boolean;
 };
 
+type VerificationSend =
+  | { ok: true; cooldown: number }
+  | { ok: false; message: string; cooldown: number };
+
 const E164 = /^\+[1-9]\d{7,14}$/;
 
-// Persists the user's WhatsApp opt-in and number. The integrations lane verifies the number;
-// the client only registers a valid E.164 number under the owner's RLS-protected row.
+// A rate-limited resend returns HTTP 429 with `{ retryAfterSeconds }`. supabase-js exposes the
+// raw Response on the error's `context`; read it defensively so the client can honor the
+// server's cooldown. Returns 0 when no usable value is present.
+async function readRetryAfterSeconds(fnError: unknown): Promise<number> {
+  try {
+    const context = (fnError as { context?: Response }).context;
+    if (!context || typeof context.json !== "function") return 0;
+    const body = (await context.json()) as { retryAfterSeconds?: number };
+    return Number.isFinite(body.retryAfterSeconds) ? Number(body.retryAfterSeconds) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Persists the user's WhatsApp opt-in and number, and lets them (re)send the verification
+// message. The number is verified via a server-side, rate-limited confirmation send; the
+// client only registers a valid E.164 number under the owner's RLS-protected row.
 export default function WhatsAppConfigForm() {
   const [enabled, setEnabled] = useState(false);
   const [phone, setPhone] = useState("");
   const [savedPhone, setSavedPhone] = useState("");
   const [verified, setVerified] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     async function load(): Promise<void> {
@@ -49,6 +71,46 @@ export default function WhatsAppConfigForm() {
     void load();
   }, []);
 
+  // Tick the resend cooldown down to zero, one second at a time.
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setTimeout(() => {
+      setCooldownSeconds((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [cooldownSeconds]);
+
+  // Trigger the server-side, rate-limited verification send. Shared by the opt-in toggle and
+  // the explicit "Reenviar código" action so both honor the same cooldown and error handling.
+  async function invokeVerificationSend(): Promise<VerificationSend> {
+    const { data, error: fnError } = await supabase.functions.invoke("proximity-dispatcher", {
+      body: { verifyWhatsapp: true },
+    });
+    if (fnError) {
+      const retryAfter = await readRetryAfterSeconds(fnError);
+      return {
+        ok: false,
+        cooldown: retryAfter,
+        message:
+          retryAfter > 0
+            ? "Espera unos segundos antes de solicitar otro código."
+            : "No pudimos enviar el código por WhatsApp. Intenta de nuevo en unos segundos.",
+      };
+    }
+    const payload = data as { dispatched?: number; cooldownSeconds?: number } | null;
+    if (payload?.dispatched !== 1) {
+      return {
+        ok: false,
+        cooldown: config.whatsappResendCooldownSeconds,
+        message: "No pudimos enviar el código por WhatsApp. Intenta de nuevo en unos segundos.",
+      };
+    }
+    return {
+      ok: true,
+      cooldown: payload.cooldownSeconds ?? config.whatsappResendCooldownSeconds,
+    };
+  }
+
   async function save(
     nextEnabled: boolean,
     nextPhone: string,
@@ -56,6 +118,7 @@ export default function WhatsAppConfigForm() {
   ): Promise<void> {
     const normalizedPhone = nextPhone.trim();
     setError(null);
+    setNotice(null);
     if (normalizedPhone && !E164.test(normalizedPhone)) {
       setError("Ingresa un número válido en formato internacional (p. ej. +593991234567).");
       return;
@@ -102,26 +165,49 @@ export default function WhatsAppConfigForm() {
 
       if (!verifyWhatsapp) return;
 
-      const { data: verificationData, error: verificationError } =
-        await supabase.functions.invoke("proximity-dispatcher", {
-          body: { verifyWhatsapp: true },
-        });
-      const dispatched = (verificationData as { dispatched?: number } | null)?.dispatched;
-      if (verificationError || dispatched !== 1) {
-        setError(
-          "Tu número se guardó, pero no pudimos enviar la confirmación por WhatsApp. Intenta de nuevo.",
-        );
+      const result = await invokeVerificationSend();
+      if (!result.ok) {
+        if (result.cooldown > 0) setCooldownSeconds(result.cooldown);
+        setError(result.message);
         return;
       }
-
       setVerified(true);
+      setNotice("Te enviamos un código de confirmación por WhatsApp.");
+      setCooldownSeconds(result.cooldown);
     } finally {
       setBusy(false);
     }
   }
 
+  // Explicit "Reenviar código": guarded against duplicate clicks and the active cooldown.
+  async function resendCode(): Promise<void> {
+    if (busy || resendBusy || cooldownSeconds > 0) return;
+    setError(null);
+    setNotice(null);
+    setResendBusy(true);
+    try {
+      const result = await invokeVerificationSend();
+      if (!result.ok) {
+        if (result.cooldown > 0) setCooldownSeconds(result.cooldown);
+        setError(result.message);
+        return;
+      }
+      setVerified(true);
+      setNotice("Te reenviamos el código por WhatsApp. Revisa tus mensajes.");
+      setCooldownSeconds(result.cooldown);
+    } finally {
+      setResendBusy(false);
+    }
+  }
+
   const isVerified = verified && phone.trim() === savedPhone;
   const hasSavedPhone = Boolean(savedPhone);
+  const resendDisabled = busy || resendBusy || cooldownSeconds > 0;
+  const resendLabel = resendBusy
+    ? "Enviando…"
+    : cooldownSeconds > 0
+      ? `Reenviar código (${cooldownSeconds}s)`
+      : "Reenviar código";
 
   const statusBadge = isVerified ? (
     <span className="badge-ok">
@@ -186,12 +272,58 @@ export default function WhatsAppConfigForm() {
         />
       </div>
 
+      {enabled && hasSavedPhone ? (
+        <div className="item" style={{ gap: 10 }}>
+          <span className="hint" style={{ flex: 1, minWidth: 0 }}>
+            {isVerified
+              ? "¿No recibiste el código? Reenvíalo a tu WhatsApp."
+              : "Te enviamos un código por WhatsApp para confirmar tu número."}
+          </span>
+          <button
+            type="button"
+            onClick={() => void resendCode()}
+            disabled={resendDisabled}
+            aria-label="Reenviar código de verificación por WhatsApp"
+            style={{
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "7px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--line, rgba(255,255,255,0.14))",
+              background: "transparent",
+              color: resendDisabled ? "var(--muted)" : "var(--ink)",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: resendDisabled ? "default" : "pointer",
+              opacity: resendDisabled ? 0.6 : 1,
+            }}
+          >
+            <Icon name="ic-chat" style={{ width: 14, height: 14 }} />
+            {resendLabel}
+          </button>
+        </div>
+      ) : null}
+
       <div className="item" style={{ borderTop: 0, paddingTop: 2 }}>
         <span className="hint">El número se guarda al salir del campo.</span>
       </div>
 
+      {notice ? (
+        <p
+          role="status"
+          style={{ margin: 0, padding: "0 13px 10px", fontSize: 11, color: "var(--ok, #38b48b)" }}
+        >
+          {notice}
+        </p>
+      ) : null}
+
       {error ? (
-        <p style={{ margin: 0, padding: "0 13px 10px", fontSize: 11, color: "var(--sev-fire)" }}>
+        <p
+          role="alert"
+          style={{ margin: 0, padding: "0 13px 10px", fontSize: 11, color: "var(--sev-fire)" }}
+        >
           {error}
         </p>
       ) : null}

@@ -39,6 +39,17 @@ export function getEnv() {
     hermesWebhookSecret: optional("HERMES_WEBHOOK_SECRET"),
     proximityWebhookSecret: optional("PROXIMITY_WEBHOOK_SECRET"),
 
+    // WhatsApp verification resend limits (server-side abuse/cost guard for issue #6)
+    whatsappResendCooldownSeconds: Number(
+      Deno.env.get("WHATSAPP_RESEND_COOLDOWN_SECONDS") ?? "60",
+    ),
+    whatsappResendWindowSeconds: Number(
+      Deno.env.get("WHATSAPP_RESEND_WINDOW_SECONDS") ?? "3600",
+    ),
+    whatsappResendMaxPerWindow: Number(
+      Deno.env.get("WHATSAPP_RESEND_MAX_PER_WINDOW") ?? "5",
+    ),
+
     // Query bounds / thresholds / locale
     maxRadiusMeters: Number(Deno.env.get("MAX_RADIUS_METERS") ?? "10000"),
     defaultRadiusMeters: Number(Deno.env.get("DEFAULT_RADIUS_METERS") ?? "3000"),
