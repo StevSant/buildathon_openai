@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { supabase } from "./supabase";
+import { hasExplicitConsent } from "./confirm-consent";
 import { ToolError } from "./tool-error";
 
 // The browser bridge for the voice agent "Cerca".
@@ -255,6 +256,13 @@ export async function startRealtimeSession(
   let toolCallsInFlight = 0;
   let toolContinuationPending = false;
   let voiceTurnActive = false;
+  // Function calls are processed once, keyed by call_id, so a replayed or duplicated event can
+  // never POST a second time (issues #11 and #10). Bounded: cleared if a session runs long.
+  const processedCallIds = new Set<string>();
+  // The user's words in the CURRENT exchange — the consent signal that gates the mutating
+  // confirm_incident tool (issue #11). Reset when a new turn begins; set from the voice
+  // transcript or a typed question. A tool call with no matching intent here is withheld.
+  let currentTurnUserText: string | null = null;
 
   function disableMicrophone() {
     micTracks.forEach((track) => {
@@ -311,6 +319,9 @@ export async function startRealtimeSession(
     responseActive = false;
     outputAudioActive = false;
     voiceTurnActive = true;
+    // A fresh turn starts with no captured user words: silence must not inherit consent
+    // from a previous exchange (issue #11).
+    currentTurnUserText = null;
     micTracks.forEach((track) => {
       if (track.readyState === "live") track.enabled = true;
     });
@@ -331,6 +342,9 @@ export async function startRealtimeSession(
   }
 
   function sendUserText(text: string) {
+    // A typed question is this turn's user input (suggestion chips included). It rarely
+    // carries confirm/dispute intent, so it also correctly withholds confirm_incident.
+    currentTurnUserText = text;
     dc.send(
       JSON.stringify({
         type: "conversation.item.create",
@@ -358,6 +372,16 @@ export async function startRealtimeSession(
     }
     toolContinuationPending = false;
     createBriefResponse();
+  }
+
+  // confirm_incident only proceeds when the current turn's words express a matching intent
+  // (issue #11). An unknown kind passes here so the server validates it (issue #12 path).
+  function confirmConsentGranted(args: Record<string, unknown>): boolean {
+    const kind = args.kind;
+    if (kind === "confirm" || kind === "dispute") {
+      return hasExplicitConsent(currentTurnUserText, kind);
+    }
+    return true;
   }
 
   function flushPendingText() {
@@ -517,6 +541,8 @@ export async function startRealtimeSession(
       msg.type === "conversation.item.input_audio_transcription.completed" &&
       msg.transcript
     ) {
+      // This is what the user actually said this turn: the consent signal for confirm_incident.
+      currentTurnUserText = msg.transcript;
       callbacks.onUserTranscript?.(msg.transcript);
       return;
     }
@@ -527,7 +553,18 @@ export async function startRealtimeSession(
       msg.name &&
       msg.call_id
     ) {
-      callbacks.onToolCall?.(msg.name);
+      // Process each call_id at most once: a replayed or duplicated event must never POST
+      // a second time or start a second continuation (issues #11 and #10).
+      if (processedCallIds.has(msg.call_id)) return;
+      processedCallIds.add(msg.call_id);
+      if (processedCallIds.size > 256) {
+        const oldest = processedCallIds.values().next().value;
+        if (oldest !== undefined) processedCallIds.delete(oldest);
+      }
+
+      const toolName = msg.name;
+      const callId = msg.call_id;
+      callbacks.onToolCall?.(toolName);
       toolCallsInFlight += 1;
       toolContinuationPending = true;
       let output: unknown;
@@ -544,19 +581,30 @@ export async function startRealtimeSession(
           throw new Error("Los argumentos de la herramienta no son válidos");
         }
         parsedArgs = parsed as Record<string, unknown>;
-        output = await runTool(
-          msg.name,
-          parsedArgs,
-          location,
-          requestController.signal,
-        );
-        callbacks.onToolResult?.(msg.name, output, parsedArgs);
+        if (toolName === "confirm_incident" && !confirmConsentGranted(parsedArgs)) {
+          // Not a failure: withhold the vote and let Cerca continue by asking for an
+          // explicit confirm/dispute. Nothing is registered until the user is clear.
+          output = {
+            ok: false,
+            needs_confirmation: true,
+            message:
+              "No registres la valoración: pide a la persona que confirme o dispute de forma explícita en su turno actual antes de usar esta herramienta.",
+          };
+        } else {
+          output = await runTool(
+            toolName,
+            parsedArgs,
+            location,
+            requestController.signal,
+          );
+          callbacks.onToolResult?.(toolName, output, parsedArgs);
+        }
       } catch (err) {
         // A failed tool call must not continue into a confirmation or a normal answer:
         // report it once, log a redacted diagnostic, and hand the model a plain error
         // output so it does not treat the failure as data (issue #12).
         toolContinuationPending = false;
-        logToolFailure(msg.name, parsedArgs, err);
+        logToolFailure(toolName, parsedArgs, err);
         callbacks.onError?.(toolFailureMessage(err));
         output = {
           error:
@@ -571,7 +619,7 @@ export async function startRealtimeSession(
             type: "conversation.item.create",
             item: {
               type: "function_call_output",
-              call_id: msg.call_id,
+              call_id: callId,
               output: JSON.stringify(output),
             },
           }),
