@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { supabase } from "./supabase";
+import { ToolError } from "./tool-error";
 
 // The browser bridge for the voice agent "Cerca".
 //
@@ -72,8 +73,27 @@ async function mintClientSecret(
   return res.json();
 }
 
+// Read the frozen `{ error }` envelope (CONTRACT §4) from a non-2xx response, tolerating a
+// missing or malformed body. The message is for diagnostics only — never surfaced verbatim.
+async function readErrorEnvelope(res: Response): Promise<string | null> {
+  try {
+    const body: unknown = await res.json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { error?: unknown }).error === "string"
+    ) {
+      return (body as { error: string }).error;
+    }
+  } catch {
+    // No JSON body — fall through to null.
+  }
+  return null;
+}
+
 // Execute one tool call against Supabase agent-tools. The user's location is injected here
-// (not by the model). user_id is derived server-side from the JWT.
+// (not by the model). user_id is derived server-side from the JWT. A non-2xx response is
+// turned into a ToolError that preserves the server envelope and status for classification.
 async function runTool(
   toolName: string,
   args: Record<string, unknown>,
@@ -95,8 +115,48 @@ async function runTool(
     }),
     signal,
   });
-  if (!res.ok) throw new Error(`agent-tools (${toolName}) falló: ${res.status}`);
+  if (!res.ok) {
+    throw new ToolError({
+      toolName,
+      status: res.status,
+      serverError: await readErrorEnvelope(res),
+    });
+  }
   return res.json();
+}
+
+// The one Spanish state shown when a tool call fails. Derives from the failure class only.
+function toolFailureMessage(err: unknown): string {
+  if (err instanceof ToolError) return err.userMessage;
+  return "No pude completar esa consulta. Intenta de nuevo.";
+}
+
+// Diagnostic log for a failed tool call. Deliberately excludes credentials and the user's
+// precise coordinates (they live in runTool, never in `args`); keeps the tool name, status,
+// server message, and the arguments needed to tell validation errors apart (CONTRACT §4-5).
+function logToolFailure(
+  toolName: string,
+  args: Record<string, unknown>,
+  err: unknown,
+): void {
+  console.warn("[Cerca] agent-tools call failed", {
+    tool: toolName,
+    status: err instanceof ToolError ? err.status : null,
+    serverError:
+      err instanceof ToolError
+        ? err.serverError
+        : err instanceof Error
+          ? err.message
+          : "error",
+    radius_meters:
+      typeof args.radius_meters === "number" ? args.radius_meters : undefined,
+    filter_category:
+      typeof args.filter_category === "string" ? args.filter_category : undefined,
+    incident_id:
+      typeof args.incident_id === "string" ? args.incident_id : undefined,
+    kind:
+      args.kind === "confirm" || args.kind === "dispute" ? args.kind : undefined,
+  });
 }
 
 
@@ -492,7 +552,18 @@ export async function startRealtimeSession(
         );
         callbacks.onToolResult?.(msg.name, output, parsedArgs);
       } catch (err) {
-        output = { error: String(err) };
+        // A failed tool call must not continue into a confirmation or a normal answer:
+        // report it once, log a redacted diagnostic, and hand the model a plain error
+        // output so it does not treat the failure as data (issue #12).
+        toolContinuationPending = false;
+        logToolFailure(msg.name, parsedArgs, err);
+        callbacks.onError?.(toolFailureMessage(err));
+        output = {
+          error:
+            err instanceof ToolError
+              ? (err.serverError ?? `HTTP ${err.status}`)
+              : "tool_call_failed",
+        };
       }
       try {
         dc.send(
@@ -507,7 +578,10 @@ export async function startRealtimeSession(
         );
       } finally {
         toolCallsInFlight -= 1;
+        // Only a successful call keeps toolContinuationPending; on failure this is a no-op
+        // and we simply return to idle instead of speaking a phantom answer.
         createToolContinuationWhenReady();
+        restoreReadyWhenIdle();
       }
     }
   };

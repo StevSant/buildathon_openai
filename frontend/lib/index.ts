@@ -18,6 +18,8 @@ export { compressImage } from "./compress-image";
 export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";
 export { startRealtimeSession } from "./realtime-agent";
+export { ToolError } from "./tool-error";
+export type { ToolErrorKind } from "./tool-error";
 export { readVerifiedIdentityResponse } from "./identity-verification";
 export { authDestination } from "./auth-state";
 export type { AuthSessionLike } from "./auth-state";
