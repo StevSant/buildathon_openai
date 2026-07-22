@@ -16,6 +16,11 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "Pulso",
   },
+  // Standard PWA capability hint. Chrome/Android read `mobile-web-app-capable`; the
+  // Apple-specific tag above stays for iOS. Emitted once globally — no per-route duplicates.
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
   icons: {
     icon: [
       { url: "/favicon-16.png", sizes: "16x16", type: "image/png" },
