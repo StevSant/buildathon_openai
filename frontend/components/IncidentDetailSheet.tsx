@@ -149,7 +149,7 @@ export default function IncidentDetailSheet({
               src={photoUrl}
               alt="Foto del incidente"
               fill
-              sizes="(max-width: 640px) calc(100vw - 28px), 612px"
+              sizes="(max-width: 480px) calc(100vw - 28px), 452px"
             />
           ) : (
             <div className="grain" />

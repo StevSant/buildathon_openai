@@ -69,7 +69,7 @@ export default function AssistantIncidentDetailCard({
             src={photoUrl}
             alt={`Foto del reporte: ${details.title}`}
             fill
-            sizes="(max-width: 640px) calc(100vw - 52px), 588px"
+            sizes="(max-width: 480px) calc(100vw - 60px), 420px"
           />
         </div>
       ) : null}
