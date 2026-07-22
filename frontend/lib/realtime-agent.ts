@@ -46,6 +46,20 @@ export interface AssistantHandle {
 const BRIEF_RESPONSE_INSTRUCTIONS =
   "Responde en español de Ecuador con una o dos frases cortas. Prioriza solo lo más urgente o cercano. No enumeres todos los incidentes: el mapa y las tarjetas ya muestran el resto. No repitas información de respuestas anteriores.";
 
+// Safety net (ms) for the input_audio_buffer.commit → committed round-trip. We normally wait
+// for the server to confirm a non-empty commit before creating a response; if neither the
+// confirmation nor an empty-commit error arrives (rare transport hiccup), we proceed anyway so
+// a turn never hangs.
+const COMMIT_CONFIRM_TIMEOUT_MS = 1200;
+
+// The Realtime error code emitted when input_audio_buffer.commit runs on an empty buffer — a
+// silent orb tap. Handled quietly (return to idle) instead of shown as a failure.
+const EMPTY_COMMIT_ERROR_CODE = "input_audio_buffer_commit_empty";
+
+// Upper bound for the processed-call-id and terminated-response-id sets, so a long-lived
+// session cannot grow them without limit. Ids are single-use, so trimming the oldest is safe.
+const LIFECYCLE_ID_CAP = 256;
+
 async function accessToken(): Promise<string> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -231,6 +245,8 @@ export async function startRealtimeSession(
     signal?.removeEventListener("abort", abortRequests);
     signal?.removeEventListener("abort", abortSession);
     voiceTurnActive = false;
+    pendingCommitResponse = false;
+    clearCommitFallback();
     mic.getTracks().forEach((track) => track.stop());
     audioEl.srcObject = null;
     dc.onclose = null;
@@ -256,8 +272,17 @@ export async function startRealtimeSession(
   let toolCallsInFlight = 0;
   let toolContinuationPending = false;
   let voiceTurnActive = false;
+  // A voice turn was committed and we are waiting for the server to confirm a non-empty audio
+  // buffer before creating a response (issue #10). Blocks other activity during the wait.
+  let pendingCommitResponse = false;
+  let commitFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  // The response currently being generated, and responses that were cancelled/failed/incomplete.
+  // Output and tool events from a terminated response are ignored so a superseded turn can never
+  // execute tools, speak, or attach late output to a newer exchange (issue #10).
+  let activeResponseId: string | null = null;
+  const terminatedResponseIds = new Set<string>();
   // Function calls are processed once, keyed by call_id, so a replayed or duplicated event can
-  // never POST a second time (issues #11 and #10). Bounded: cleared if a session runs long.
+  // never POST a second time (issues #11 and #10). Bounded: trimmed if a session runs long.
   const processedCallIds = new Set<string>();
   // The user's words in the CURRENT exchange — the consent signal that gates the mutating
   // confirm_incident tool (issue #11). Reset when a new turn begins; set from the voice
@@ -276,6 +301,7 @@ export async function startRealtimeSession(
       responseActive ||
       outputAudioActive ||
       voiceTurnActive ||
+      pendingCommitResponse ||
       toolCallsInFlight > 0 ||
       toolContinuationPending
     ) {
@@ -297,6 +323,51 @@ export async function startRealtimeSession(
     );
   }
 
+  function clearCommitFallback() {
+    if (commitFallbackTimer !== null) {
+      clearTimeout(commitFallbackTimer);
+      commitFallbackTimer = null;
+    }
+  }
+
+  // After a commit we wait for input_audio_buffer.committed before creating a response, so an
+  // empty (silent) commit produces no answer. A timer guards against a lost confirmation.
+  function beginPendingCommit() {
+    pendingCommitResponse = true;
+    callbacks.onStatus?.("speaking");
+    clearCommitFallback();
+    commitFallbackTimer = setTimeout(() => {
+      commitFallbackTimer = null;
+      resolvePendingCommit(true);
+    }, COMMIT_CONFIRM_TIMEOUT_MS);
+  }
+
+  // Confirmed non-empty commit → create the response; empty-commit error or a new turn → drop
+  // it and return to idle. Idempotent: only the first resolution for a pending commit acts.
+  function resolvePendingCommit(create: boolean) {
+    if (!pendingCommitResponse) return;
+    pendingCommitResponse = false;
+    clearCommitFallback();
+    if (create) {
+      createBriefResponse();
+    } else {
+      restoreReadyWhenIdle();
+    }
+  }
+
+  function rememberTerminatedResponse(responseId: string | null) {
+    if (!responseId) return;
+    terminatedResponseIds.add(responseId);
+    if (terminatedResponseIds.size > LIFECYCLE_ID_CAP) {
+      const oldest = terminatedResponseIds.values().next().value;
+      if (oldest !== undefined) terminatedResponseIds.delete(oldest);
+    }
+  }
+
+  function isFromTerminatedResponse(responseId?: string): boolean {
+    return typeof responseId === "string" && terminatedResponseIds.has(responseId);
+  }
+
   function startVoiceTurn(): boolean {
     if (
       !sessionConfigured ||
@@ -311,13 +382,20 @@ export async function startRealtimeSession(
     dc.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
     if (responseActive) {
       dc.send(JSON.stringify({ type: "response.cancel" }));
+      // The response we just cancelled must not run tools or attach late output to this
+      // newer turn (issue #10).
+      rememberTerminatedResponse(activeResponseId);
     }
     if (outputAudioActive) {
       dc.send(JSON.stringify({ type: "output_audio_buffer.clear" }));
     }
+    // A commit awaiting confirmation belongs to the turn being superseded — drop it.
+    pendingCommitResponse = false;
+    clearCommitFallback();
 
     responseActive = false;
     outputAudioActive = false;
+    activeResponseId = null;
     voiceTurnActive = true;
     // A fresh turn starts with no captured user words: silence must not inherit consent
     // from a previous exchange (issue #11).
@@ -337,7 +415,9 @@ export async function startRealtimeSession(
     if (dc.readyState !== "open") return false;
 
     dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-    createBriefResponse();
+    // Do NOT create a response yet: wait for input_audio_buffer.committed to confirm the
+    // buffer was non-empty, so a silent tap yields no empty-audio error or answer (issue #10).
+    beginPendingCommit();
     return true;
   }
 
@@ -366,6 +446,7 @@ export async function startRealtimeSession(
       responseActive ||
       outputAudioActive ||
       voiceTurnActive ||
+      pendingCommitResponse ||
       dc.readyState !== "open"
     ) {
       return;
@@ -390,6 +471,7 @@ export async function startRealtimeSession(
       responseActive ||
       outputAudioActive ||
       voiceTurnActive ||
+      pendingCommitResponse ||
       toolCallsInFlight > 0 ||
       toolContinuationPending ||
       dc.readyState !== "open"
@@ -440,9 +522,11 @@ export async function startRealtimeSession(
       name?: string;
       arguments?: string;
       call_id?: string;
+      response_id?: string;
       transcript?: string;
-      error?: { message?: string };
+      error?: { message?: string; code?: string };
       response?: {
+        id?: string;
         status?: string;
         status_details?: { error?: { message?: string } };
       };
@@ -462,8 +546,15 @@ export async function startRealtimeSession(
       return;
     }
 
+    // A confirmed non-empty commit: only now do we create the response for this turn (#10).
+    if (msg.type === "input_audio_buffer.committed") {
+      resolvePendingCommit(true);
+      return;
+    }
+
     if (msg.type === "response.created") {
       responseActive = true;
+      activeResponseId = msg.response?.id ?? null;
       if (!voiceTurnActive) {
         disableMicrophone();
         callbacks.onStatus?.("speaking");
@@ -494,15 +585,27 @@ export async function startRealtimeSession(
       msg.type === "response.failed"
     ) {
       responseActive = false;
+      const endedResponseId = msg.response?.id ?? activeResponseId;
+      const failedOrIncomplete =
+        msg.type === "response.cancelled" ||
+        msg.type === "response.failed" ||
+        (msg.type === "response.done" &&
+          (msg.response?.status === "failed" ||
+            msg.response?.status === "incomplete"));
+      if (failedOrIncomplete) {
+        // A cancelled/failed/incomplete response must not run late tools or continue (#10).
+        rememberTerminatedResponse(endedResponseId);
+      }
+      if (endedResponseId === activeResponseId) activeResponseId = null;
       if (
         msg.type === "response.done" &&
         (msg.response?.status === "failed" ||
           msg.response?.status === "incomplete")
       ) {
-        callbacks.onError?.(
-          msg.response.status_details?.error?.message ??
-            "La respuesta de Cerca quedó incompleta",
-        );
+        if (msg.response.status_details?.error?.message) {
+          console.warn("[Cerca] response ended", { status: msg.response.status });
+        }
+        callbacks.onError?.("La respuesta de Cerca quedó incompleta. Intenta de nuevo.");
       }
       createToolContinuationWhenReady();
       restoreReadyWhenIdle();
@@ -511,18 +614,31 @@ export async function startRealtimeSession(
     }
     if (msg.type === "error") {
       if (!sessionConfigured) {
-        callbacks.onError?.(
-          msg.error?.message ?? "No se pudo configurar la sesión de voz",
-        );
+        if (msg.error?.message) {
+          console.warn("[Cerca] realtime session error", { code: msg.error.code });
+        }
+        callbacks.onError?.("No se pudo iniciar la sesión de voz. Intenta de nuevo.");
         cleanup(true);
         return;
+      }
+      // A silent orb tap commits an empty buffer: return to idle quietly, with no error
+      // bubble and no response (issue #10).
+      if (msg.error?.code === EMPTY_COMMIT_ERROR_CODE) {
+        resolvePendingCommit(false);
+        flushPendingText();
+        return;
+      }
+      if (msg.error?.message) {
+        console.warn("[Cerca] realtime session error", { code: msg.error.code });
       }
       responseActive = false;
       outputAudioActive = false;
       voiceTurnActive = false;
+      pendingCommitResponse = false;
+      clearCommitFallback();
       disableMicrophone();
       restoreReadyWhenIdle();
-      callbacks.onError?.(msg.error?.message ?? "error de la sesión de voz");
+      callbacks.onError?.("Se interrumpió la sesión de voz. Intenta de nuevo.");
       flushPendingText();
       return;
     }
@@ -534,6 +650,9 @@ export async function startRealtimeSession(
         msg.type === "response.audio_transcript.done") &&
       msg.transcript
     ) {
+      // Drop a late transcript from a superseded response so it can't attach to a newer
+      // exchange (issue #10).
+      if (isFromTerminatedResponse(msg.response_id)) return;
       callbacks.onAgentTranscript?.(msg.transcript);
       return;
     }
@@ -553,11 +672,13 @@ export async function startRealtimeSession(
       msg.name &&
       msg.call_id
     ) {
+      // A tool call from a cancelled/failed response must not execute (issue #10).
+      if (isFromTerminatedResponse(msg.response_id)) return;
       // Process each call_id at most once: a replayed or duplicated event must never POST
       // a second time or start a second continuation (issues #11 and #10).
       if (processedCallIds.has(msg.call_id)) return;
       processedCallIds.add(msg.call_id);
-      if (processedCallIds.size > 256) {
+      if (processedCallIds.size > LIFECYCLE_ID_CAP) {
         const oldest = processedCallIds.values().next().value;
         if (oldest !== undefined) processedCallIds.delete(oldest);
       }
@@ -680,6 +801,7 @@ export async function startRealtimeSession(
         !responseActive &&
         !outputAudioActive &&
         !voiceTurnActive &&
+        !pendingCommitResponse &&
         toolCallsInFlight === 0 &&
         !toolContinuationPending
       ) {
