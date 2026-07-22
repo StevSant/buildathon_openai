@@ -8,9 +8,11 @@ import AssistantIncidentMap from "./AssistantIncidentMap";
 export default function AssistantTurnList({
   turns,
   location,
+  showMaps = true,
 }: {
   turns: AssistantTurn[];
   location: AssistantLocation | null;
+  showMaps?: boolean;
 }) {
   return (
     <div className="assistant-turn-list">
@@ -19,7 +21,7 @@ export default function AssistantTurnList({
         if (turn.kind === "incidents") {
           return (
             <div key={key} className="assistant-nearby-result">
-              {location ? (
+              {location && showMaps ? (
                 <AssistantIncidentMap incidents={turn.incidents} center={location} />
               ) : null}
               <AssistantIncidentCards incidents={turn.incidents} />

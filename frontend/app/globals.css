@@ -238,6 +238,19 @@ body {
 .icard .ph { height: 110px; border-radius: 10px; overflow: hidden; margin: 9px 0 3px; }
 .icard .ph img { width: 100%; height: 100%; object-fit: cover; }
 .icard .more { font: 600 10.5px/1 var(--mono); color: var(--muted); padding: 9px 0 10px; border-top: 1px solid var(--line); text-align: center; }
+.assistant-conversation { display: flex; flex-direction: column; gap: 8px; }
+.assistant-turn-list { display: flex; flex-direction: column; gap: 8px; }
+.assistant-nearby-result { display: flex; flex-direction: column; gap: 8px; }
+.assistant-history { border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel) 74%, transparent); overflow: hidden; }
+.assistant-history summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; color: var(--muted); font: 600 11px/1.2 var(--sans); }
+.assistant-history summary::-webkit-details-marker { display: none; }
+.assistant-history summary::before { content: "›"; color: var(--accent); font: 700 16px/1 var(--mono); transition: transform 0.15s ease; }
+.assistant-history[open] summary::before { transform: rotate(90deg); }
+.assistant-history summary span { margin-left: auto; min-width: 20px; border-radius: 999px; padding: 3px 6px; text-align: center; color: var(--faint); background: var(--panel-2); font: 600 10px/1 var(--mono); }
+.assistant-history[open] .assistant-turn-list { padding: 0 10px 10px; }
+.assistant-map { position: relative; width: 100%; height: 156px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); }
+.assistant-map-user { display: block; width: 13px; height: 13px; border: 2px solid #06120f; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+.assistant-map-pin { display: block; width: 12px; height: 12px; border: 2px solid rgba(6, 18, 15, 0.9); border-radius: 50% 50% 50% 2px; transform: rotate(45deg); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45); }
 .listening { display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 12px; margin-top: 6px; }
 .eq { display: inline-flex; gap: 3px; align-items: flex-end; height: 14px; }
 .eq i { width: 3px; background: var(--accent); border-radius: 2px; animation: eq 1s ease-in-out infinite; }

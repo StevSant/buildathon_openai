@@ -8,7 +8,13 @@ import { supabase } from "./supabase";
 // and when the model emits a function call, bridge it to the Supabase agent-tools function,
 // then feed the result back into the conversation. OpenAI never calls Supabase directly.
 
-export type AssistantStatus = "connecting" | "listening" | "error" | "closed";
+export type AssistantStatus =
+  | "connecting"
+  | "ready"
+  | "listening"
+  | "speaking"
+  | "error"
+  | "closed";
 
 export interface AssistantCallbacks {
   onStatus?: (status: AssistantStatus) => void;
@@ -16,7 +22,11 @@ export interface AssistantCallbacks {
   onAgentTranscript?: (text: string) => void;
   onToolCall?: (toolName: string) => void;
   /** Fires with the raw tool result so the UI can render rich cards, not just text. */
-  onToolResult?: (toolName: string, result: unknown) => void;
+  onToolResult?: (
+    toolName: string,
+    result: unknown,
+    args: Record<string, unknown>,
+  ) => void;
   /** Fires when the Realtime session reports an error event over the data channel. */
   onError?: (message: string) => void;
 }
@@ -25,7 +35,14 @@ export interface AssistantHandle {
   stop: () => void;
   /** Send a typed question into the live conversation (queued until the channel opens). */
   sendText: (text: string) => void;
+  /** Open the microphone for one intentional hold-to-talk turn. */
+  startVoiceTurn: () => boolean;
+  /** Mute and submit the active hold-to-talk turn. */
+  finishVoiceTurn: () => boolean;
 }
+
+const BRIEF_RESPONSE_INSTRUCTIONS =
+  "Responde en español de Ecuador con una o dos frases cortas. Prioriza solo lo más urgente o cercano. No enumeres todos los incidentes: el mapa y las tarjetas ya muestran el resto. No repitas información de respuestas anteriores.";
 
 async function accessToken(): Promise<string> {
   const { data } = await supabase.auth.getSession();
@@ -35,7 +52,10 @@ async function accessToken(): Promise<string> {
 }
 
 // Mint the ephemeral OpenAI client secret via our edge function (authorized by the user JWT).
-async function mintClientSecret(personaId: string): Promise<{
+async function mintClientSecret(
+  personaId: string,
+  signal: AbortSignal,
+): Promise<{
   clientSecret: string;
   model: string;
 }> {
@@ -46,6 +66,7 @@ async function mintClientSecret(personaId: string): Promise<{
       Authorization: `Bearer ${await accessToken()}`,
     },
     body: JSON.stringify({ personaId }),
+    signal,
   });
   if (!res.ok) throw new Error(`create-realtime-session falló: ${res.status}`);
   return res.json();
@@ -57,6 +78,7 @@ async function runTool(
   toolName: string,
   args: Record<string, unknown>,
   location: { lat: number; long: number },
+  signal: AbortSignal,
 ): Promise<unknown> {
   const res = await fetch(`${config.functionsUrl}/agent-tools`, {
     method: "POST",
@@ -71,6 +93,7 @@ async function runTool(
       // are ignored.
       arguments: { ...args, user_lat: location.lat, user_long: location.long },
     }),
+    signal,
   });
   if (!res.ok) throw new Error(`agent-tools (${toolName}) falló: ${res.status}`);
   return res.json();
@@ -81,10 +104,26 @@ export async function startRealtimeSession(
   personaId: string,
   location: { lat: number; long: number },
   callbacks: AssistantCallbacks = {},
+  signal?: AbortSignal,
 ): Promise<AssistantHandle> {
   callbacks.onStatus?.("connecting");
 
-  const { clientSecret, model } = await mintClientSecret(personaId);
+  const requestController = new AbortController();
+  const abortRequests = () => requestController.abort(signal?.reason);
+  if (signal?.aborted) abortRequests();
+  signal?.addEventListener("abort", abortRequests, { once: true });
+
+  let clientSecret: string;
+  let model: string;
+  try {
+    ({ clientSecret, model } = await mintClientSecret(
+      personaId,
+      requestController.signal,
+    ));
+  } catch (error) {
+    signal?.removeEventListener("abort", abortRequests);
+    throw error;
+  }
 
   const pc = new RTCPeerConnection();
   const audioEl = document.createElement("audio");
@@ -94,10 +133,56 @@ export async function startRealtimeSession(
   };
 
   // Local microphone → OpenAI.
-  const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-  mic.getTracks().forEach((track) => pc.addTrack(track, mic));
+  let mic: MediaStream;
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (error) {
+    signal?.removeEventListener("abort", abortRequests);
+    pc.close();
+    throw error;
+  }
+  if (requestController.signal.aborted) {
+    mic.getTracks().forEach((track) => track.stop());
+    signal?.removeEventListener("abort", abortRequests);
+    pc.close();
+    throw requestController.signal.reason;
+  }
+  const micTracks = mic.getAudioTracks();
+  micTracks.forEach((track) => {
+    track.enabled = false;
+  });
+  micTracks.forEach((track) => pc.addTrack(track, mic));
 
   const dc = pc.createDataChannel("oai-events");
+  let cleanedUp = false;
+  let sessionConfigured = false;
+
+  function cleanup(notifyClosed: boolean) {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    requestController.abort();
+    signal?.removeEventListener("abort", abortRequests);
+    signal?.removeEventListener("abort", abortSession);
+    voiceTurnActive = false;
+    mic.getTracks().forEach((track) => track.stop());
+    audioEl.srcObject = null;
+    dc.onclose = null;
+    dc.onerror = null;
+    pc.onconnectionstatechange = null;
+    if (dc.readyState !== "closed") dc.close();
+    if (pc.connectionState !== "closed") pc.close();
+    if (notifyClosed) callbacks.onStatus?.("closed");
+  }
+
+  const abortSession = () => cleanup(true);
+  signal?.removeEventListener("abort", abortRequests);
+  signal?.addEventListener("abort", abortSession, { once: true });
 
   // Typed questions (suggestion chips) are serialized: the Realtime API allows only one
   // active response per conversation, so a question queues while a response is generating
@@ -106,10 +191,86 @@ export async function startRealtimeSession(
   // ask in one gesture.
   const pendingTexts: string[] = [];
   let responseActive = false;
+  let outputAudioActive = false;
   let toolCallsInFlight = 0;
+  let toolContinuationPending = false;
+  let voiceTurnActive = false;
+
+  function disableMicrophone() {
+    micTracks.forEach((track) => {
+      track.enabled = false;
+    });
+  }
+
+  function restoreReadyWhenIdle() {
+    if (
+      !sessionConfigured ||
+      responseActive ||
+      outputAudioActive ||
+      voiceTurnActive ||
+      toolCallsInFlight > 0 ||
+      toolContinuationPending
+    ) {
+      return;
+    }
+    disableMicrophone();
+    callbacks.onStatus?.("ready");
+  }
+
+  function createBriefResponse() {
+    responseActive = true;
+    disableMicrophone();
+    callbacks.onStatus?.("speaking");
+    dc.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { instructions: BRIEF_RESPONSE_INSTRUCTIONS },
+      }),
+    );
+  }
+
+  function startVoiceTurn(): boolean {
+    if (
+      !sessionConfigured ||
+      voiceTurnActive ||
+      toolCallsInFlight > 0 ||
+      toolContinuationPending ||
+      dc.readyState !== "open"
+    ) {
+      return false;
+    }
+
+    dc.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+    if (responseActive) {
+      dc.send(JSON.stringify({ type: "response.cancel" }));
+    }
+    if (outputAudioActive) {
+      dc.send(JSON.stringify({ type: "output_audio_buffer.clear" }));
+    }
+
+    responseActive = false;
+    outputAudioActive = false;
+    voiceTurnActive = true;
+    micTracks.forEach((track) => {
+      if (track.readyState === "live") track.enabled = true;
+    });
+    callbacks.onStatus?.("listening");
+    return true;
+  }
+
+  function finishVoiceTurn(): boolean {
+    if (!voiceTurnActive) return false;
+
+    voiceTurnActive = false;
+    disableMicrophone();
+    if (dc.readyState !== "open") return false;
+
+    dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    createBriefResponse();
+    return true;
+  }
 
   function sendUserText(text: string) {
-    responseActive = true;
     dc.send(
       JSON.stringify({
         type: "conversation.item.create",
@@ -120,19 +281,58 @@ export async function startRealtimeSession(
         },
       }),
     );
-    dc.send(JSON.stringify({ type: "response.create" }));
+    createBriefResponse();
+  }
+
+  function createToolContinuationWhenReady() {
+    if (
+      !sessionConfigured ||
+      !toolContinuationPending ||
+      toolCallsInFlight > 0 ||
+      responseActive ||
+      outputAudioActive ||
+      voiceTurnActive ||
+      dc.readyState !== "open"
+    ) {
+      return;
+    }
+    toolContinuationPending = false;
+    createBriefResponse();
   }
 
   function flushPendingText() {
-    if (responseActive || toolCallsInFlight > 0 || dc.readyState !== "open") return;
+    if (
+      !sessionConfigured ||
+      responseActive ||
+      outputAudioActive ||
+      voiceTurnActive ||
+      toolCallsInFlight > 0 ||
+      toolContinuationPending ||
+      dc.readyState !== "open"
+    ) {
+      return;
+    }
     const next = pendingTexts.shift();
     if (next !== undefined) sendUserText(next);
   }
 
   dc.onopen = () => {
-    callbacks.onStatus?.("listening");
+    dc.send(
+      JSON.stringify({
+        type: "session.update",
+        session: {
+          type: "realtime",
+          audio: {
+            input: {
+              turn_detection: null,
+            },
+          },
+        },
+      }),
+    );
     // Inject location as a context message (NOT session.update, which would overwrite the
-    // server-set persona instructions). Exact coordinates are never read aloud.
+    // server-set persona instructions when the instructions field is included). Exact
+    // coordinates are never read aloud.
     dc.send(
       JSON.stringify({
         type: "conversation.item.create",
@@ -148,7 +348,6 @@ export async function startRealtimeSession(
         },
       }),
     );
-    flushPendingText();
   };
 
   dc.onmessage = async (event) => {
@@ -159,27 +358,86 @@ export async function startRealtimeSession(
       call_id?: string;
       transcript?: string;
       error?: { message?: string };
+      response?: {
+        status?: string;
+        status_details?: { error?: { message?: string } };
+      };
     };
     try {
-      msg = JSON.parse(event.data);
+      const parsed: unknown = JSON.parse(event.data);
+      if (typeof parsed !== "object" || parsed === null) return;
+      msg = parsed;
     } catch {
       return;
     }
 
-    // Response lifecycle: only one response may be active per conversation, so queued
-    // questions flush on response.done. Error events (e.g. a rejected response.create)
-    // are surfaced instead of silently dropped.
-    if (msg.type === "response.created") {
-      responseActive = true;
+    if (msg.type === "session.updated") {
+      sessionConfigured = true;
+      callbacks.onStatus?.("ready");
+      flushPendingText();
       return;
     }
-    if (msg.type === "response.done") {
+
+    if (msg.type === "response.created") {
+      responseActive = true;
+      if (!voiceTurnActive) {
+        disableMicrophone();
+        callbacks.onStatus?.("speaking");
+      }
+      return;
+    }
+    if (
+      msg.type === "output_audio_buffer.started" ||
+      msg.type === "response.output_audio.delta"
+    ) {
+      outputAudioActive = true;
+      if (!voiceTurnActive) {
+        disableMicrophone();
+        callbacks.onStatus?.("speaking");
+      }
+      return;
+    }
+    if (msg.type === "output_audio_buffer.stopped") {
+      outputAudioActive = false;
+      restoreReadyWhenIdle();
+      createToolContinuationWhenReady();
+      flushPendingText();
+      return;
+    }
+    if (
+      msg.type === "response.done" ||
+      msg.type === "response.cancelled" ||
+      msg.type === "response.failed"
+    ) {
       responseActive = false;
+      if (
+        msg.type === "response.done" &&
+        (msg.response?.status === "failed" ||
+          msg.response?.status === "incomplete")
+      ) {
+        callbacks.onError?.(
+          msg.response.status_details?.error?.message ??
+            "La respuesta de Cerca quedó incompleta",
+        );
+      }
+      createToolContinuationWhenReady();
+      restoreReadyWhenIdle();
       flushPendingText();
       return;
     }
     if (msg.type === "error") {
+      if (!sessionConfigured) {
+        callbacks.onError?.(
+          msg.error?.message ?? "No se pudo configurar la sesión de voz",
+        );
+        cleanup(true);
+        return;
+      }
       responseActive = false;
+      outputAudioActive = false;
+      voiceTurnActive = false;
+      disableMicrophone();
+      restoreReadyWhenIdle();
       callbacks.onError?.(msg.error?.message ?? "error de la sesión de voz");
       flushPendingText();
       return;
@@ -211,61 +469,105 @@ export async function startRealtimeSession(
     ) {
       callbacks.onToolCall?.(msg.name);
       toolCallsInFlight += 1;
-      const args = msg.arguments ? JSON.parse(msg.arguments) : {};
+      toolContinuationPending = true;
       let output: unknown;
+      let parsedArgs: Record<string, unknown> = {};
       try {
-        output = await runTool(msg.name, args, location);
-        callbacks.onToolResult?.(msg.name, output);
+        const parsed: unknown = msg.arguments
+          ? JSON.parse(msg.arguments)
+          : {};
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          throw new Error("Los argumentos de la herramienta no son válidos");
+        }
+        parsedArgs = parsed as Record<string, unknown>;
+        output = await runTool(
+          msg.name,
+          parsedArgs,
+          location,
+          requestController.signal,
+        );
+        callbacks.onToolResult?.(msg.name, output, parsedArgs);
       } catch (err) {
         output = { error: String(err) };
       }
-      dc.send(
-        JSON.stringify({
-          type: "conversation.item.create",
-          item: {
-            type: "function_call_output",
-            call_id: msg.call_id,
-            output: JSON.stringify(output),
-          },
-        }),
-      );
-      responseActive = true;
-      dc.send(JSON.stringify({ type: "response.create" }));
-      toolCallsInFlight -= 1;
+      try {
+        dc.send(
+          JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "function_call_output",
+              call_id: msg.call_id,
+              output: JSON.stringify(output),
+            },
+          }),
+        );
+      } finally {
+        toolCallsInFlight -= 1;
+        createToolContinuationWhenReady();
+      }
+    }
+  };
+
+  dc.onclose = () => cleanup(true);
+  dc.onerror = () => {
+    callbacks.onError?.("Se cerró la conexión de voz");
+    cleanup(true);
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "failed") {
+      callbacks.onError?.("Se perdió la conexión de voz");
+      cleanup(true);
+    } else if (pc.connectionState === "closed") {
+      cleanup(true);
     }
   };
 
   // WebRTC handshake with OpenAI Realtime using the ephemeral client secret.
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
 
-  const sdpRes = await fetch(`${config.openaiRealtimeUrl}?model=${model}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${clientSecret}`,
-      "Content-Type": "application/sdp",
-    },
-    body: offer.sdp,
-  });
-  if (!sdpRes.ok) {
-    callbacks.onStatus?.("error");
-    throw new Error(`Handshake WebRTC con OpenAI falló: ${sdpRes.status}`);
+    const sdpRes = await fetch(`${config.openaiRealtimeUrl}?model=${model}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${clientSecret}`,
+        "Content-Type": "application/sdp",
+      },
+      body: offer.sdp,
+      signal: requestController.signal,
+    });
+    if (!sdpRes.ok) {
+      callbacks.onStatus?.("error");
+      throw new Error(`Handshake WebRTC con OpenAI falló: ${sdpRes.status}`);
+    }
+    await pc.setRemoteDescription({ type: "answer", sdp: await sdpRes.text() });
+  } catch (error) {
+    cleanup(false);
+    throw error;
   }
-  await pc.setRemoteDescription({ type: "answer", sdp: await sdpRes.text() });
 
   return {
     sendText: (text: string) => {
-      if (dc.readyState === "open" && !responseActive && toolCallsInFlight === 0) {
+      if (
+        sessionConfigured &&
+        dc.readyState === "open" &&
+        !responseActive &&
+        !outputAudioActive &&
+        !voiceTurnActive &&
+        toolCallsInFlight === 0 &&
+        !toolContinuationPending
+      ) {
         sendUserText(text);
       } else {
         pendingTexts.push(text);
       }
     },
-    stop: () => {
-      mic.getTracks().forEach((track) => track.stop());
-      dc.close();
-      pc.close();
-      callbacks.onStatus?.("closed");
-    },
+    startVoiceTurn,
+    finishVoiceTurn,
+    stop: () => cleanup(true),
   };
 }

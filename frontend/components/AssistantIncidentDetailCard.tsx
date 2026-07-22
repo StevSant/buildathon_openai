@@ -1,7 +1,7 @@
 "use client";
 
-import type { Category, IncidentDetails, IncidentStatus } from "@pulso/core";
-import { config } from "@/lib";
+import type { Category, IncidentStatus } from "@pulso/core";
+import { config, type AssistantIncidentDetails } from "@/lib";
 import Icon from "./Icon";
 
 const CATEGORY_LABEL: Record<Category, string> = {
@@ -53,7 +53,7 @@ function formatRelativeTime(iso: string): string {
 export default function AssistantIncidentDetailCard({
   details,
 }: {
-  details: IncidentDetails;
+  details: AssistantIncidentDetails;
 }) {
   const status = STATUS_CHIP[details.status];
   const photoUrl = details.photo_path

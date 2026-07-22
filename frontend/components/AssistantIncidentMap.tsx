@@ -21,6 +21,13 @@ export default function AssistantIncidentMap({
   incidents: NearbyIncident[];
   center: AssistantLocation;
 }) {
+  const latitudes = [center.lat, ...incidents.map((incident) => incident.lat)];
+  const longitudes = [center.long, ...incidents.map((incident) => incident.lng)];
+  const bounds: [[number, number], [number, number]] = [
+    [Math.min(...longitudes), Math.min(...latitudes)],
+    [Math.max(...longitudes), Math.max(...latitudes)],
+  ];
+
   return (
     <div
       className="assistant-map"
@@ -35,9 +42,11 @@ export default function AssistantIncidentMap({
         attributionControl={false}
         mapStyle={config.mapStyleUrl}
         initialViewState={{
-          latitude: center.lat,
-          longitude: center.long,
-          zoom: config.defaultZoom,
+          bounds,
+          fitBoundsOptions: {
+            padding: 24,
+            maxZoom: config.defaultZoom,
+          },
         }}
         style={{ position: "absolute", inset: 0 }}
       >

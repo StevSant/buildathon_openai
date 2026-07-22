@@ -1,24 +1,44 @@
 "use client";
 
-import { useRef, useState } from "react";
-import type { IncidentDetails, NearbyIncident } from "@pulso/core";
+import { useEffect, useRef, useState } from "react";
+import { CATEGORY_VALUES, INCIDENT_STATUS_LABELS } from "@pulso/core";
 import {
+  getNearbyIncidents,
   startRealtimeSession,
   TOOL_CALL_LABELS,
   type AssistantHandle,
+  type AssistantIncidentDetails,
+  type AssistantLocation,
   type AssistantStatus,
+  type AssistantTurn,
+  type AssistantTurnContent,
 } from "@/lib";
-import AssistantIncidentCards from "./AssistantIncidentCards";
-import AssistantIncidentDetailCard from "./AssistantIncidentDetailCard";
+import AssistantConversation from "./AssistantConversation";
 
-// Voice agent "Cerca". Establishes the WebRTC session and surfaces a live conversation
-// while the agent queries real incident data through the browser tool bridge. Tool
-// results also render as rich cards (photos, distances, confirmations) below the audio
-// transcript, so the user sees the evidence behind what Cerca says.
-type Turn =
-  | { kind: "text"; role: "user" | "agent" | "tool"; text: string }
-  | { kind: "incidents"; incidents: NearbyIncident[] }
-  | { kind: "detail"; details: IncidentDetails };
+function isAssistantIncidentDetails(
+  value: unknown,
+): value is AssistantIncidentDetails {
+  if (typeof value !== "object" || value === null) return false;
+  const details = value as Record<string, unknown>;
+  return (
+    typeof details.id === "string" &&
+    typeof details.title === "string" &&
+    (typeof details.description === "string" || details.description === null) &&
+    typeof details.category === "string" &&
+    CATEGORY_VALUES.includes(details.category as (typeof CATEGORY_VALUES)[number]) &&
+    typeof details.severity === "number" &&
+    Number.isInteger(details.severity) &&
+    details.severity >= 1 &&
+    details.severity <= 5 &&
+    typeof details.status === "string" &&
+    Object.prototype.hasOwnProperty.call(INCIDENT_STATUS_LABELS, details.status) &&
+    typeof details.confirmations === "number" &&
+    typeof details.disputes === "number" &&
+    typeof details.reporter_verified === "boolean" &&
+    typeof details.created_at === "string" &&
+    (typeof details.photo_path === "string" || details.photo_path === null)
+  );
+}
 
 // Aligned with the agent tools: nearby query, severity focus, category filters, and the
 // trust question that makes Cerca cite its community sources.
@@ -33,32 +53,119 @@ const SUGGESTED_QUESTIONS = [
 export default function RealtimeAssistant({
   personaId = "cerca",
 }: {
-  personaId?: string;
+  personaId?: "cerca" | "ruta";
 }) {
   const [status, setStatus] = useState<AssistantStatus | "idle">("idle");
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<AssistantTurn[]>([]);
+  const [location, setLocation] = useState<AssistantLocation | null>(null);
   const handle = useRef<AssistantHandle | null>(null);
   // Synchronous guards (React state updates are not): `starting` deduplicates concurrent
   // start() calls so rapid taps can never open two sessions (orphaning a live mic), and
   // `generation` invalidates a connect that finishes after the user already hit stop.
   const starting = useRef<Promise<AssistantHandle | null> | null>(null);
+  const connectionAbort = useRef<AbortController | null>(null);
   const generation = useRef(0);
+  const nextExchangeId = useRef(0);
+  const currentExchangeId = useRef<number | null>(null);
+  const exchangeBusyRef = useRef(false);
+  const [exchangeBusy, setExchangeBusy] = useState(false);
+  const conversationEnd = useRef<HTMLDivElement | null>(null);
 
-  function addTurn(turn: Turn) {
-    setTurns((previousTurns) => [...previousTurns, turn]);
+  useEffect(
+    () => () => {
+      generation.current += 1;
+      starting.current = null;
+      connectionAbort.current?.abort();
+      connectionAbort.current = null;
+      const activeHandle = handle.current;
+      handle.current = null;
+      activeHandle?.stop();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const end = conversationEnd.current;
+    if (!end || turns.length === 0) return;
+    const conversation = end.closest(".convo");
+    if (conversation?.querySelector(".assistant-history[open]")) return;
+    end.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [turns]);
+
+  function updateExchangeBusy(busy: boolean) {
+    exchangeBusyRef.current = busy;
+    setExchangeBusy(busy);
+  }
+
+  function updateSessionStatus(nextStatus: AssistantStatus) {
+    setStatus(nextStatus);
+    if (
+      nextStatus === "ready" ||
+      nextStatus === "error" ||
+      nextStatus === "closed"
+    ) {
+      updateExchangeBusy(false);
+      return;
+    }
+    if (
+      nextStatus === "connecting" ||
+      nextStatus === "listening" ||
+      nextStatus === "speaking"
+    ) {
+      updateExchangeBusy(true);
+    }
+  }
+
+  function openExchange(userText?: string) {
+    const exchangeId = nextExchangeId.current + 1;
+    nextExchangeId.current = exchangeId;
+    currentExchangeId.current = exchangeId;
+    if (userText) {
+      setTurns((previousTurns) => [
+        ...previousTurns,
+        { exchangeId, kind: "text", role: "user", text: userText },
+      ]);
+    }
+  }
+
+  function beginExchange(userText?: string): boolean {
+    if (exchangeBusyRef.current) return false;
+    updateExchangeBusy(true);
+    openExchange(userText);
+    return true;
+  }
+
+  function addTurn(turn: AssistantTurnContent, targetExchangeId?: number) {
+    let exchangeId = targetExchangeId ?? currentExchangeId.current;
+    if (exchangeId === null) {
+      exchangeId = nextExchangeId.current + 1;
+      nextExchangeId.current = exchangeId;
+      currentExchangeId.current = exchangeId;
+    }
+    setTurns((previousTurns) => [...previousTurns, { ...turn, exchangeId }]);
   }
 
   function start(): Promise<AssistantHandle | null> {
     if (handle.current) return Promise.resolve(handle.current);
     if (starting.current) return starting.current;
     const sessionGeneration = generation.current;
-    setStatus("connecting");
-    starting.current = connect(sessionGeneration);
-    return starting.current;
+    const abortController = new AbortController();
+    connectionAbort.current = abortController;
+    updateSessionStatus("connecting");
+    const startPromise = connect(sessionGeneration, abortController.signal);
+    starting.current = startPromise;
+    void startPromise.finally(() => {
+      if (starting.current === startPromise) starting.current = null;
+      if (connectionAbort.current === abortController) {
+        connectionAbort.current = null;
+      }
+    });
+    return startPromise;
   }
 
   async function connect(
     sessionGeneration: number,
+    signal: AbortSignal,
   ): Promise<AssistantHandle | null> {
     try {
       const position = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -66,18 +173,48 @@ export default function RealtimeAssistant({
           enableHighAccuracy: true,
         }),
       );
+      const currentLocation = {
+        lat: position.coords.latitude,
+        long: position.coords.longitude,
+      };
+      if (generation.current !== sessionGeneration) return null;
+      setLocation(currentLocation);
+      let readyBeforeHandle = false;
       const session = await startRealtimeSession(
         personaId,
-        { lat: position.coords.latitude, long: position.coords.longitude },
+        currentLocation,
         {
-          onStatus: setStatus,
-          onUserTranscript: (text) => addTurn({ kind: "text", role: "user", text }),
-          onAgentTranscript: (text) => addTurn({ kind: "text", role: "agent", text }),
-          onToolCall: (name) =>
-            addTurn({ kind: "text", role: "tool", text: TOOL_CALL_LABELS[name] ?? `→ ${name}` }),
-          // agent-tools wraps results in a speak-ready envelope: nearby → { incidents: [...] },
-          // details → { found, incident }. The rows are supersets of the CONTRACT shapes.
-          onToolResult: (name, result) => {
+          onStatus: (nextStatus) => {
+            if (generation.current !== sessionGeneration) return;
+            if (nextStatus === "closed") handle.current = null;
+            // The data channel can open before startRealtimeSession returns its handle.
+            // Keep the UI connecting until the handle is actually usable.
+            if (nextStatus === "ready" && handle.current === null) {
+              readyBeforeHandle = true;
+              return;
+            }
+            updateSessionStatus(nextStatus);
+          },
+          onUserTranscript: (text) => {
+            if (generation.current !== sessionGeneration) return;
+            addTurn({ kind: "text", role: "user", text });
+          },
+          onAgentTranscript: (text) => {
+            if (generation.current !== sessionGeneration) return;
+            addTurn({ kind: "text", role: "agent", text });
+          },
+          onToolCall: (name) => {
+            if (generation.current !== sessionGeneration) return;
+            addTurn({
+              kind: "text",
+              role: "tool",
+              text: TOOL_CALL_LABELS[name] ?? `→ ${name}`,
+            });
+          },
+          // The speak-ready agent envelopes intentionally omit coordinates. Nearby results
+          // are enriched through the browser RPC before the map receives them.
+          onToolResult: (name, result, toolArgs) => {
+            if (generation.current !== sessionGeneration) return;
             const envelope =
               typeof result === "object" && result !== null
                 ? (result as Record<string, unknown>)
@@ -87,20 +224,92 @@ export default function RealtimeAssistant({
               Array.isArray(envelope.incidents) &&
               envelope.incidents.length > 0
             ) {
-              addTurn({ kind: "incidents", incidents: envelope.incidents as NearbyIncident[] });
+              const incidentIds = envelope.incidents.flatMap((incident) =>
+                typeof incident === "object" &&
+                incident !== null &&
+                typeof (incident as Record<string, unknown>).id === "string"
+                  ? [(incident as Record<string, unknown>).id as string]
+                  : [],
+              );
+              const exchangeId = currentExchangeId.current;
+              if (exchangeId !== null && incidentIds.length > 0) {
+                const radiusMeters =
+                  typeof toolArgs.radius_meters === "number" &&
+                  Number.isFinite(toolArgs.radius_meters) &&
+                  toolArgs.radius_meters > 0
+                    ? toolArgs.radius_meters
+                    : undefined;
+                const category =
+                  typeof toolArgs.filter_category === "string" &&
+                  CATEGORY_VALUES.includes(
+                    toolArgs.filter_category as (typeof CATEGORY_VALUES)[number],
+                  )
+                    ? (toolArgs.filter_category as (typeof CATEGORY_VALUES)[number])
+                    : null;
+                const showMapFallback = () => {
+                  if (generation.current !== sessionGeneration) return;
+                  addTurn(
+                    {
+                      kind: "text",
+                      role: "tool",
+                      text: "No pude cargar el mapa de estos incidentes.",
+                    },
+                    exchangeId,
+                  );
+                };
+                void getNearbyIncidents({
+                  lat: currentLocation.lat,
+                  long: currentLocation.long,
+                  radiusMeters,
+                  category,
+                })
+                  .then((nearbyIncidents) => {
+                    if (generation.current !== sessionGeneration) return;
+                    const byId = new Map(
+                      nearbyIncidents
+                        .filter(
+                          (incident) =>
+                            Number.isFinite(incident.lat) &&
+                            Number.isFinite(incident.lng) &&
+                            CATEGORY_VALUES.includes(incident.category) &&
+                            Object.prototype.hasOwnProperty.call(
+                              INCIDENT_STATUS_LABELS,
+                              incident.status,
+                            ),
+                        )
+                        .map((incident) => [incident.id, incident]),
+                    );
+                    const incidents = incidentIds.flatMap((id) => {
+                      const incident = byId.get(id);
+                      return incident ? [incident] : [];
+                    });
+                    if (incidents.length > 0) {
+                      addTurn({ kind: "incidents", incidents }, exchangeId);
+                    } else {
+                      showMapFallback();
+                    }
+                  })
+                  .catch(showMapFallback);
+              }
             }
             if (
               name === "get_incident_details" &&
               envelope.found === true &&
-              typeof envelope.incident === "object" &&
-              envelope.incident !== null
+              isAssistantIncidentDetails(envelope.incident)
             ) {
-              addTurn({ kind: "detail", details: envelope.incident as IncidentDetails });
+              addTurn({ kind: "detail", details: envelope.incident });
             }
           },
-          onError: (message) =>
-            addTurn({ kind: "text", role: "tool", text: `⚠ ${message}` }),
+          onError: () => {
+            if (generation.current !== sessionGeneration) return;
+            addTurn({
+              kind: "text",
+              role: "agent",
+              text: "No pude completar esa respuesta. Intenta de nuevo.",
+            });
+          },
         },
+        signal,
       );
       if (generation.current !== sessionGeneration) {
         // The user hit stop while we were connecting — discard the fresh session.
@@ -108,52 +317,107 @@ export default function RealtimeAssistant({
         return null;
       }
       handle.current = session;
+      if (readyBeforeHandle) updateSessionStatus("ready");
       return session;
     } catch {
-      if (generation.current === sessionGeneration) setStatus("error");
+      if (generation.current === sessionGeneration) updateSessionStatus("error");
       return null;
-    } finally {
-      starting.current = null;
     }
   }
 
   function stop() {
     generation.current += 1;
+    starting.current = null;
+    connectionAbort.current?.abort();
+    connectionAbort.current = null;
     handle.current?.stop();
     handle.current = null;
+    currentExchangeId.current = null;
+    updateExchangeBusy(false);
     setStatus("idle");
   }
 
-  // Tapping a chip works in any state: it starts the session first when needed (the
-  // bridge queues the question until the data channel opens) and asks right away.
-  async function ask(question: string) {
-    addTurn({ kind: "text", role: "user", text: question });
-    const current = handle.current ?? (await start());
-    current?.sendText(question);
+  function startVoiceTurn(): boolean {
+    if (status !== "ready" || exchangeBusyRef.current) return false;
+    const session = handle.current;
+    if (!session?.startVoiceTurn()) return false;
+
+    openExchange();
+    return true;
   }
 
-  // A live session is either dialing in or streaming; the badge only reads "EN VIVO"
-  // once audio is actually flowing (listening), while the orb pulses through both phases.
-  const live = status === "listening" || status === "connecting";
-  const connected = status === "listening";
+  function finishVoiceTurn() {
+    if (status !== "listening") return;
+    handle.current?.finishVoiceTurn();
+  }
+
+  function handleOrbTap() {
+    if (status === "connecting") {
+      stop();
+      return;
+    }
+    if (status === "ready") {
+      startVoiceTurn();
+      return;
+    }
+    if (status === "listening") {
+      finishVoiceTurn();
+      return;
+    }
+    if (status !== "speaking") void start();
+  }
+
+  async function ask(question: string) {
+    if (!beginExchange(question)) return;
+    const questionGeneration = generation.current;
+    const session = handle.current ?? (await start());
+    if (generation.current !== questionGeneration || !session) return;
+    updateExchangeBusy(true);
+    session.sendText(question);
+  }
+
+  // The session remains live while the microphone stays closed between intentional turns.
+  const live =
+    status === "ready" ||
+    status === "listening" ||
+    status === "speaking" ||
+    status === "connecting";
+  const connected =
+    status === "ready" || status === "listening" || status === "speaking";
 
   const toggle = live ? stop : start;
-  const orbLabel = live ? "Finalizar conversación con Cerca" : "Hablar con Cerca";
+  const orbLabel =
+    status === "connecting"
+      ? "Cancelar conexión con Cerca"
+      : status === "listening"
+        ? "Enviar mensaje de voz a Cerca"
+        : status === "ready"
+          ? "Empezar a hablar con Cerca"
+          : status === "speaking"
+            ? "Cerca está respondiendo"
+            : "Iniciar conversación con Cerca";
 
   const footer =
     status === "connecting"
       ? "Conectando…"
-      : status === "listening"
-        ? "Escuchando…"
-        : status === "error"
-          ? "Error de conexión — toca el orbe para reintentar"
-          : "Toca el orbe para hablar";
+      : status === "speaking"
+        ? "Cerca está respondiendo…"
+        : status === "listening"
+          ? "Escuchando… toca el orbe para enviar"
+          : status === "ready"
+            ? "Toca el orbe para hablar"
+            : status === "error"
+              ? "Error de conexión — toca Reintentar"
+              : "Inicia la conversación para hablar";
 
-  const buttonLabel = live
-    ? "Finalizar conversación"
-    : status === "error"
-      ? "Reintentar"
-      : "Hablar con Cerca";
+  const buttonLabel =
+    status === "connecting"
+      ? "Cancelar conexión"
+      : connected
+        ? "Finalizar conversación"
+        : status === "error"
+          ? "Reintentar"
+          : "Hablar con Cerca";
 
   return (
     <div className="s-voice">
@@ -181,9 +445,13 @@ export default function RealtimeAssistant({
         <button
           type="button"
           className={live ? "orb" : "orb idle"}
-          onClick={toggle}
+          disabled={status === "speaking"}
+          onClick={handleOrbTap}
           aria-label={orbLabel}
-          style={{ appearance: "none", WebkitAppearance: "none" }}
+          style={{
+            appearance: "none",
+            WebkitAppearance: "none",
+          }}
         />
       </div>
 
@@ -192,7 +460,7 @@ export default function RealtimeAssistant({
           <button
             key={question}
             type="button"
-            disabled={status === "connecting"}
+            disabled={exchangeBusy}
             onClick={() => void ask(question)}
           >
             {question}
@@ -201,29 +469,11 @@ export default function RealtimeAssistant({
       </div>
 
       <div className="convo">
-        {turns.map((turn, index) => {
-          if (turn.kind === "incidents") {
-            return <AssistantIncidentCards key={index} incidents={turn.incidents} />;
-          }
-          if (turn.kind === "detail") {
-            return <AssistantIncidentDetailCard key={index} details={turn.details} />;
-          }
-          return turn.role === "tool" ? (
-            <div key={index} className="toolcall">
-              {turn.text}
-            </div>
-          ) : (
-            <div
-              key={index}
-              className={turn.role === "user" ? "bubble u" : "bubble a"}
-            >
-              {turn.text}
-            </div>
-          );
-        })}
+        <AssistantConversation turns={turns} location={location} />
+        <div ref={conversationEnd} aria-hidden="true" />
       </div>
 
-      <div className="listening">
+      <div className="listening" role="status" aria-live="polite">
         {status === "listening" && (
           <span className="eq">
             <i />
