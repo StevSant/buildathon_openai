@@ -17,6 +17,18 @@ export { TOOL_CALL_LABELS } from "./tool-call-labels";
 export { compressImage } from "./compress-image";
 export { decideAlertTier, subscribeToNotificationIncidents } from "./notifications";
 export type { AlertTier } from "./notifications";
+export {
+  LocationContext,
+  FALLBACK_LOCATION,
+  useCurrentLocation,
+} from "./current-location";
+export type { CurrentLocation, LocationSource } from "./current-location";
+export {
+  playNotificationSound,
+  readNotificationSoundEnabled,
+  setNotificationSoundEnabled,
+  subscribeNotificationSoundEnabled,
+} from "./notification-sound";
 export { startRealtimeSession } from "./realtime-agent";
 export { hasExplicitConsent } from "./confirm-consent";
 export { ToolError } from "./tool-error";

@@ -3,6 +3,7 @@ import {
   AlertRulesForm,
   EmergencyContactsForm,
   Icon,
+  NotificationSoundToggle,
   PermissionsCard,
   SosButton,
   WhatsAppConfigForm,
@@ -24,6 +25,7 @@ export default function SecurityPage() {
       <WhatsAppConfigForm />
       <EmergencyContactsForm />
       <AlertRulesForm />
+      <NotificationSoundToggle />
       <SosButton />
 
       <p className="hint" style={{ padding: "2px 2px 8px" }}>
