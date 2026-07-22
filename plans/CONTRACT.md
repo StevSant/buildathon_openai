@@ -36,16 +36,26 @@ type IncidentStatus = 'provisional' | 'confirmed' | 'disputed' | 'resolved'
 type VerificationMethod = 'registry' | 'algorithmic'
 type Severity = 1 | 2 | 3 | 4 | 5
 
+type ConfirmationKind = 'confirm' | 'dispute'
+
 type NearbyIncident = {
   id: string; title: string; description: string | null; category: Category
   severity: Severity; status: IncidentStatus; distance_meters: number
   confirmations: number; created_at: string; lng: number; lat: number
 }
 // One incident's public view: everything in NearbyIncident except distance_meters
-// (a single-incident lookup has no user origin to measure from), plus reporter_verified.
-// Anonymous by design (ADR-020): no reporter identity ever crosses this seam.
+// (a single-incident lookup has no user origin to measure from). Anonymous by design
+// (ADR-020): no reporter identity ever crosses this seam. `disputes` + `photo_path` were
+// added in migration 0003; the three `viewer_*`/`can_vote` fields in migration 0007 are
+// ANONYMOUS, viewer-specific eligibility derived from the caller's own auth.uid() only —
+// they answer "may THIS caller vote, and how did they vote", never "who reported it".
 type IncidentDetails = Omit<NearbyIncident, 'distance_meters'> & {
   reporter_verified: boolean
+  disputes: number
+  photo_path: string | null
+  viewer_is_reporter: boolean            // did this caller author the report (#13)
+  can_vote: boolean                      // may this caller vote — false only for the author (#13)
+  viewer_vote: ConfirmationKind | null   // this caller's own current vote, if any (#14)
 }
 type IncidentComment = {
   id: string; body: string; created_at: string; author_verified: boolean
@@ -68,8 +78,8 @@ lane owns the tables, RLS policies, and RPC bodies.
 | RPC | Args | Returns |
 |---|---|---|
 | `get_nearby_incidents` | `user_lat` float, `user_long` float, `radius_meters` int (default 3000), `filter_category` text\|null | rows of `NearbyIncident` (≤20, ordered by distance) |
-| `get_incident_details` | `target_id` uuid | one `IncidentDetails` (anonymous: no reporter identity, only `reporter_verified` — ADR-020) |
-| `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }`; authenticated-only restricted privileged RPC |
+| `get_incident_details` | `target_id` uuid | one `IncidentDetails` (anonymous — ADR-020: no reporter identity, only `reporter_verified` + the viewer-specific `viewer_is_reporter` / `can_vote` / `viewer_vote` eligibility) |
+| `confirm_incident` | `target_id` uuid, `kind` `'confirm' \| 'dispute'` | `{ id, confirmations, status }`; authenticated-only restricted privileged RPC. Rejects the report's author server-side (self-vote → HTTP 403, SQLSTATE `PT403`) and a disabled account (HTTP 403, SQLSTATE `42501`); one switchable vote per user (ADR-018). |
 | `get_incident_comments` | `target_id` uuid | up to 100 anonymous `IncidentComment` rows, oldest first |
 | `add_incident_comment` | `target_id` uuid, `comment_body` text | one anonymous `IncidentComment`; authenticated active profiles only |
 
@@ -106,7 +116,7 @@ from the JWT — **never** trust a `user_id` in the body.
 | `verify-identity` | `{ cedula: string }` | success: `{ verified: true, method: VerificationMethod, profile: Profile }`; invalid identity: HTTP 422 `{ error }` |
 | `analyze-report` | `{ photo_path: string }` | `{ category: Category, severity: Severity, title: string, description: string }` |
 | `create-realtime-session` | `{ personaId: 'cerca' \| 'ruta', context?: { lat?: number, lng?: number } }` | `{ clientSecret: string, expiresAt: string, model: string, voice: string }` |
-| `agent-tools` | `{ tool: 'get_nearby_incidents' \| 'get_incident_details' \| 'confirm_incident', arguments: object }` | speak-ready envelope over the §3.2 shapes: nearby → `{ total, radius_label, summary, incidents: NearbyIncident&labels[] }` (no lng/lat); details → `{ found, summary? , incident?: IncidentDetails&labels }` (no lng/lat, keeps `photo_path`); confirm → `{ id, confirmations, status, status_label, message }`. `&labels` = added `*_label` strings + `reported_minutes_ago` |
+| `agent-tools` | `{ tool: 'get_nearby_incidents' \| 'get_incident_details' \| 'confirm_incident', arguments: object }` | speak-ready envelope over the §3.2 shapes: nearby → `{ total, radius_label, summary, incidents: NearbyIncident&labels[] }` (no lng/lat); details → `{ found, summary? , incident?: IncidentDetails&labels }` (no lng/lat, keeps `photo_path`, keeps the anonymous `viewer_is_reporter`/`can_vote`/`viewer_vote` + an `eligibility_label` so the agent never offers to vote for a report's author); confirm → `{ id, confirmations, status, status_label, message }`. `&labels` = added `*_label` strings + `reported_minutes_ago` |
 | `proximity-dispatcher` | incident webhook with `x-pulso-webhook-secret`; **manual SOS:** `{ type: 'sos', location: { lat: number, lng: number } }` with user JWT; **WhatsApp verify/resend (own number):** `{ verifyWhatsapp: true }` with user JWT | `{ dispatched: number }` (successful sends only; one failed contact does not abort later contacts). **verify/resend:** `{ dispatched: 0 \| 1, cooldownSeconds }`; server-side rate-limited → HTTP 429 `{ error, retryAfterSeconds }` (cooldown + per-window cap; codes are never stored) |
 
 Error envelope (all functions): non-2xx → `{ error: string }`.
