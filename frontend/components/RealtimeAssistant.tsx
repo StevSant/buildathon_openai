@@ -204,18 +204,30 @@ export default function RealtimeAssistant({
       };
       if (generation.current !== sessionGeneration) return null;
       setLocation(currentLocation);
-      let readyBeforeHandle = false;
+      const startupState: {
+        ready: boolean;
+        terminalStatus: "error" | "closed" | null;
+      } = { ready: false, terminalStatus: null };
       const session = await startRealtimeSession(
         personaId,
         currentLocation,
         {
           onStatus: (nextStatus) => {
             if (generation.current !== sessionGeneration) return;
+            if (
+              handle.current === null &&
+              (nextStatus === "error" || nextStatus === "closed")
+            ) {
+              startupState.ready = false;
+              startupState.terminalStatus = nextStatus;
+              updateSessionStatus(nextStatus);
+              return;
+            }
             if (nextStatus === "closed") handle.current = null;
             // The data channel can open before startRealtimeSession returns its handle.
             // Keep the UI connecting until the handle is actually usable.
             if (nextStatus === "ready" && handle.current === null) {
-              readyBeforeHandle = true;
+              startupState.ready = true;
               return;
             }
             updateSessionStatus(nextStatus);
@@ -341,8 +353,12 @@ export default function RealtimeAssistant({
         session.stop();
         return null;
       }
+      if (startupState.terminalStatus !== null) {
+        session.stop();
+        return null;
+      }
       handle.current = session;
-      if (readyBeforeHandle) updateSessionStatus("ready");
+      if (startupState.ready) updateSessionStatus("ready");
       return session;
     } catch {
       if (generation.current === sessionGeneration) updateSessionStatus("error");
