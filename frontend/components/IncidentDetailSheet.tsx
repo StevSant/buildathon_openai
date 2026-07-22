@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import type { Category, IncidentDetails, IncidentStatus } from "@pulso/core";
 import { IncidentComments } from "@/components";
 import { config, confirmIncident, getIncidentDetails, haversineMeters } from "@/lib";
@@ -144,7 +145,12 @@ export default function IncidentDetailSheet({
 
         <div className="det-photo">
           {photoUrl ? (
-            <img src={photoUrl} alt="Foto del incidente" />
+            <Image
+              src={photoUrl}
+              alt="Foto del incidente"
+              fill
+              sizes="(max-width: 640px) calc(100vw - 28px), 612px"
+            />
           ) : (
             <div className="grain" />
           )}

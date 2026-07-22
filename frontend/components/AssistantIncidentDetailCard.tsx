@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { Category, IncidentStatus } from "@pulso/core";
 import { config, type AssistantIncidentDetails } from "@/lib";
 import Icon from "./Icon";
@@ -64,7 +65,12 @@ export default function AssistantIncidentDetailCard({
     <div className="icard" aria-label={`Detalle del incidente: ${details.title}`}>
       {photoUrl ? (
         <div className="ph">
-          <img src={photoUrl} alt={`Foto del reporte: ${details.title}`} />
+          <Image
+            src={photoUrl}
+            alt={`Foto del reporte: ${details.title}`}
+            fill
+            sizes="(max-width: 640px) calc(100vw - 52px), 588px"
+          />
         </div>
       ) : null}
       <div className="inc" style={{ borderLeftColor: CATEGORY_COLOR[details.category] }}>
