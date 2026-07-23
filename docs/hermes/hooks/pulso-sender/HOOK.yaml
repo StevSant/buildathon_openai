@@ -1,0 +1,5 @@
+name: pulso-sender
+description: Cache the WhatsApp sender per session so Pulso tools can receive it
+events:
+  - session:start
+  - agent:start

@@ -4,13 +4,14 @@ It maps a WhatsApp sender to a Pulso account, mints a short-lived authenticated
 Supabase JWT, and forwards calls to the frozen `agent-tools` Edge Function.
 
 DEMO MODE (PULSO_DEMO_MODE=1): reads (`get_nearby_incidents`, `get_incident_details`)
-return public civic data around a fixed venue center using the service role directly
+return public civic data around a requested place or the default venue center using the service role directly
 against the PostGIS RPCs — no sender, no whatsapp_config, no alert_rules needed. This
 is the documented fallback for when Hermes does not yet surface the WhatsApp sender to
 tool calls. Writes (`confirm_incident`) still require a resolved identity.
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -30,6 +31,9 @@ SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 DEMO_MODE = os.environ.get("PULSO_DEMO_MODE", "").strip() in ("1", "true", "yes")
 DEMO_LAT = float(os.environ.get("PULSO_DEFAULT_LAT", "-1.05458"))   # Portoviejo centro
 DEMO_LNG = float(os.environ.get("PULSO_DEFAULT_LNG", "-80.45445"))
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_USER_AGENT = "pulso-demo/1.0"
+PORTOVIEJO_VIEWBOX = "-80.50,-1.00,-80.40,-1.10"
 
 mcp = FastMCP("pulso")
 
@@ -62,8 +66,18 @@ def _mint_user_jwt(user_id: str) -> str:
     )
 
 
-def _request_json(url: str, headers: dict[str, str], data: bytes | None = None) -> object:
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+def _request_json(
+    url: str,
+    headers: dict[str, str],
+    data: bytes | None = None,
+    method: str | None = None,
+) -> object:
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=headers,
+        method=method or ("POST" if data else "GET"),
+    )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -72,6 +86,53 @@ def _request_json(url: str, headers: dict[str, str], data: bytes | None = None) 
         raise ValueError(f"Pulso no pudo completar la consulta ({error.code}): {detail}") from error
     except urllib.error.URLError as error:
         raise ValueError("No pude conectar con Pulso en este momento.") from error
+
+
+def _geocode(place: str) -> tuple[float, float] | None:
+    """Resolve a Portoviejo place with Nominatim without surfacing lookup failures."""
+    if not place.strip():
+        return None
+    query = urllib.parse.urlencode(
+        {
+            "q": f"{place.strip()}, Portoviejo, Ecuador",
+            "format": "json",
+            "limit": "1",
+            "viewbox": PORTOVIEJO_VIEWBOX,
+        }
+    )
+    request = urllib.request.Request(
+        f"{NOMINATIM_URL}?{query}",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": NOMINATIM_USER_AGENT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            results = json.load(response)
+        if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+            return None
+        latitude = float(results[0]["lat"])
+        longitude = float(results[0]["lon"])
+        if not (
+            math.isfinite(latitude)
+            and math.isfinite(longitude)
+            and -90 <= latitude <= 90
+            and -180 <= longitude <= 180
+        ):
+            return None
+        return latitude, longitude
+    except Exception as error:  # noqa: BLE001 - geocoding is a best-effort fallback
+        _log(f"geocoding unavailable for {place!r}: {error}")
+        return None
+
+
+def _updated_row_count(payload: object) -> int:
+    if isinstance(payload, list):
+        return len(payload)
+    if isinstance(payload, dict):
+        return 1
+    return 0
 
 
 def _rpc_service(name: str, args: dict[str, object]) -> object:
@@ -85,6 +146,22 @@ def _rpc_service(name: str, args: dict[str, object]) -> object:
         },
         json.dumps(args).encode("utf-8"),
     )
+
+
+def _enrich_incident(payload: object) -> object:
+    """Flatten the RPC's single-row result and add ready-to-share URLs the agent can
+    paste into WhatsApp: photo_url (public report-photos bucket) and map_url (never
+    dictate raw coordinates in text — share the link instead)."""
+    row = payload[0] if isinstance(payload, list) and payload else payload
+    if not isinstance(row, dict):
+        return payload
+    photo = row.get("photo_path")
+    if isinstance(photo, str) and photo:
+        row["photo_url"] = f"{SUPABASE_URL}/storage/v1/object/public/report-photos/{photo}"
+    lat, lng = row.get("lat"), row.get("lng")
+    if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+        row["map_url"] = f"https://maps.google.com/?q={lat},{lng}"
+    return row
 
 
 def _safe_comments(incident_id: str) -> object:
@@ -123,9 +200,17 @@ def _safe_comments(incident_id: str) -> object:
         return []
 
 
+def _phone_match_filter(phone: str) -> str:
+    """PostgREST or-filter matching phone_e164 stored with or without the leading '+'."""
+    digits = phone.lstrip("+")
+    return f"(phone_e164.eq.+{digits},phone_e164.eq.{digits})"
+
+
 def _resolve_user_id(sender: str) -> str:
     phone = _normalize_sender(sender)
-    query = urllib.parse.urlencode({"select": "user_id", "phone_e164": f"eq.{phone}", "limit": "1"})
+    query = urllib.parse.urlencode(
+        {"select": "user_id", "or": _phone_match_filter(phone), "limit": "1"}
+    )
     rows = _request_json(
         f"{SUPABASE_URL}/rest/v1/whatsapp_config?{query}",
         {"apikey": SERVICE_KEY, "authorization": f"Bearer {SERVICE_KEY}"},
@@ -182,30 +267,120 @@ def _identity(sender: str) -> tuple[str, str]:
 
 
 @mcp.tool()
+def opt_out(sender: str) -> object:
+    """Disables WhatsApp alerts and revokes active invitations for the sender."""
+    phone = _normalize_sender(sender)
+    headers = {
+        "apikey": SERVICE_KEY,
+        "authorization": f"Bearer {SERVICE_KEY}",
+        "content-type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    config_query = urllib.parse.urlencode({"or": _phone_match_filter(phone)})
+    config_rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/whatsapp_config?{config_query}",
+        headers,
+        json.dumps({"enabled": False}).encode("utf-8"),
+        method="PATCH",
+    )
+
+    invitation_query = urllib.parse.urlencode(
+        {
+            "or": _phone_match_filter(phone),
+            # BAJA must stop future SOS alerts too: decline pending AND accepted.
+            "opt_in_status": "neq.declined",
+        }
+    )
+    invitation_rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/emergency_contacts?{invitation_query}",
+        headers,
+        json.dumps({"opt_in_status": "declined"}).encode("utf-8"),
+        method="PATCH",
+    )
+
+    return {
+        "disabled": _updated_row_count(config_rows) > 0,
+        "declined_invitations": _updated_row_count(invitation_rows),
+    }
+
+
+@mcp.tool()
+def accept_invitation(sender: str) -> object:
+    """Accepts pending emergency-contact invitations for the sender."""
+    phone = _normalize_sender(sender)
+    headers = {
+        "apikey": SERVICE_KEY,
+        "authorization": f"Bearer {SERVICE_KEY}",
+        "content-type": "application/json",
+        "Prefer": "return=representation",
+    }
+    query = urllib.parse.urlencode(
+        {
+            "or": _phone_match_filter(phone),
+            "opt_in_status": "eq.pending",
+        }
+    )
+    rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/emergency_contacts?{query}",
+        headers,
+        json.dumps({"opt_in_status": "accepted"}).encode("utf-8"),
+        method="PATCH",
+    )
+    return {"accepted_count": _updated_row_count(rows)}
+
+
+@mcp.tool()
 def get_nearby_incidents(
     sender: str = "",
     radius_meters: int = 3000,
     filter_category: str | None = None,
+    place: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
 ) -> object:
-    """Returns active incidents near the user (or near the venue center in demo mode)."""
+    """Returns active incidents near explicit coordinates, a place, or the configured center."""
+    if lat is None and lng is None:
+        resolved = _geocode(place) if place else None
+    elif (
+        isinstance(lat, (int, float))
+        and not isinstance(lat, bool)
+        and isinstance(lng, (int, float))
+        and not isinstance(lng, bool)
+        and math.isfinite(float(lat))
+        and math.isfinite(float(lng))
+        and -90 <= float(lat) <= 90
+        and -180 <= float(lng) <= 180
+    ):
+        resolved = (float(lat), float(lng))
+    else:
+        raise ValueError("Debes proporcionar latitud y longitud válidas juntas.")
+
     if DEMO_MODE:
-        _log("demo mode: nearby incidents around venue center via service role")
+        query_lat, query_lng = resolved or (DEMO_LAT, DEMO_LNG)
+        _log("demo mode: nearby incidents via service role")
         return _rpc_service(
             "get_nearby_incidents",
             {
-                "user_lat": DEMO_LAT,
-                "user_long": DEMO_LNG,
+                "user_lat": query_lat,
+                "user_long": query_lng,
                 "radius_meters": radius_meters,
                 "filter_category": filter_category,
             },
         )
     user_id, bearer = _identity(sender)
-    lat, lng = _resolve_alert_center(user_id)
+    if resolved is None:
+        try:
+            resolved = _resolve_alert_center(user_id)
+        except ValueError as error:
+            _log(f"alert center unavailable; using default center: {error}")
+            resolved = (DEMO_LAT, DEMO_LNG)
+    query_lat, query_lng = resolved
     return _call_agent_tools(
         "get_nearby_incidents",
         {
-            "user_lat": lat,
-            "user_long": lng,
+            "user_lat": query_lat,
+            "user_long": query_lng,
             "radius_meters": radius_meters,
             "filter_category": filter_category,
         },
@@ -219,7 +394,7 @@ def get_incident_details(incident_id: str, sender: str = "") -> object:
     summarize what neighbors report, note if the author is a verified member."""
     if DEMO_MODE:
         return {
-            "incident": _rpc_service("get_incident_details", {"target_id": incident_id}),
+            "incident": _enrich_incident(_rpc_service("get_incident_details", {"target_id": incident_id})),
             "comments": _safe_comments(incident_id),
         }
     _, bearer = _identity(sender)
