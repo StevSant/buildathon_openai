@@ -403,6 +403,64 @@ def get_nearby_incidents(
 
 
 @mcp.tool()
+def get_incident_history(
+    sender: str = "",
+    radius_meters: int = 3000,
+    since_hours: int = 168,
+    place: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+) -> object:
+    """Past incidents (resolved or expired) near a place or coordinates, newest first.
+    Use when asked about what HAS happened in a zone, not what is happening now."""
+    if lat is None and lng is None:
+        resolved = _geocode(place) if place else None
+    elif (
+        isinstance(lat, (int, float))
+        and not isinstance(lat, bool)
+        and isinstance(lng, (int, float))
+        and not isinstance(lng, bool)
+        and math.isfinite(float(lat))
+        and math.isfinite(float(lng))
+        and -90 <= float(lat) <= 90
+        and -180 <= float(lng) <= 180
+    ):
+        resolved = (float(lat), float(lng))
+    else:
+        raise ValueError("Debes proporcionar latitud y longitud válidas juntas.")
+
+    if place and resolved is None:
+        raise ValueError(
+            "No pude ubicar ese lugar. Prueba con otra referencia conocida "
+            "(un parque, avenida, barrio o ciudad de Manabí)."
+        )
+
+    source = "place" if place else ("coordinates" if resolved else "default_center")
+    if resolved is None and not DEMO_MODE:
+        try:
+            resolved = _resolve_alert_center(_resolve_user_id(sender))
+            source = "alert_center"
+        except ValueError as error:
+            _log(f"alert center unavailable; using default center: {error}")
+    query_lat, query_lng = resolved or (DEMO_LAT, DEMO_LNG)
+    # get_incident_history is a new RPC unknown to the frozen agent-tools edge fn,
+    # so both modes call it directly via the service role (the RPC is anonymous,
+    # bounded to 100 rows and returns no exact coordinates by design).
+    return {
+        "queried_around": {"source": source, "place": place or None},
+        "incidents": _rpc_service(
+            "get_incident_history",
+            {
+                "user_lat": query_lat,
+                "user_long": query_lng,
+                "radius_meters": radius_meters,
+                "since_hours": since_hours,
+            },
+        ),
+    }
+
+
+@mcp.tool()
 def get_incident_details(incident_id: str, sender: str = "") -> object:
     """One incident's details plus community comments. Interpret the comments as a source:
     summarize what neighbors report, note if the author is a verified member."""

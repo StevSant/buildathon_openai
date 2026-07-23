@@ -285,6 +285,28 @@ Issue #22 (place-based geocoding via Nominatim for `get_nearby_incidents`), issu
 (`accept_invitation` — unblocks SOS delivery to contacts), and the incidents-INSERT
 Database Webhook wiring (ops, Dashboard).
 
+### 12.8 Proximity alerts verified end-to-end (2026-07-23)
+The full automatic pipeline works: incident INSERT → Database Webhook (Dashboard,
+`public.incidents` INSERT → `proximity-dispatcher` edge fn) → `get_alert_matches` →
+Hermes webhook → WhatsApp. Key gotcha for anyone reproducing or migrating:
+`get_alert_matches` (migration `0002`, frozen) INNER JOINs `emergency_contacts` with
+`opt_in_status = 'accepted'` and sends the alert to the **contact's** phone, not the
+rule owner's. To receive alerts on your own WhatsApp you must exist as your own
+accepted emergency contact (`owner_id` = you, `phone_e164` = your number).
+
+### 12.9 Per-category TTL + incident history (issues #27/#28)
+- Migration `0009`: `BEFORE INSERT` trigger derives `expires_at` from category
+  (accident/fire 6 h, flood/other 12 h, road_closure 24 h, public_event 8 h). The legacy
+  24 h column default was dropped so the trigger sees `NULL`; explicit values win.
+- Migration `0010`: `get_incident_history(lat, long, radius, since_hours)` — resolved or
+  expired incidents, newest first, max 100 rows, no exact coordinates (only
+  `distance_meters`). Granted to `authenticated` + `service_role`.
+- Shim tool `get_incident_history` mirrors `get_nearby_incidents` (place geocoding,
+  `queried_around` honesty, honest failure on unresolvable place) but calls the RPC
+  directly via the service role in BOTH modes: the frozen `agent-tools` edge fn does not
+  know this RPC, and the RPC is anonymous and bounded by design. `queried_around.source`
+  reports `alert_center` when the user's registered center was used.
+
 **Addendum 12.4 (2026-07-23) — LID aliases:** modern WhatsApp accounts reach the gateway
 as a privacy alias (`<lid>@lid`), not the phone JID, so the raw `user_id` cannot be used
 for identity. The gateway hook now resolves the alias through Baileys' on-disk mapping
