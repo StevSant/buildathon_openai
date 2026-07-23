@@ -11,7 +11,7 @@ model:
   # base_url: ${OPENAI_BASE_URL}   # only with provider: custom
 
 agent:
-  max_turns: 40
+  max_turns: 15                 # cost/abuse bound — a civic Q&A never needs more
   reasoning_effort: "low"       # WhatsApp Q&A is light; keep it snappy and cheap
 
 # ── Pulso data as a LOCAL stdio MCP shim → runtime toolset "mcp-pulso" ───────────
@@ -51,6 +51,9 @@ platforms:
     extra:
       reply_prefix: ""                    # no "[Hermes]" header on replies
       unauthorized_dm_behavior: ignore    # stay silent to numbers not in WHATSAPP_ALLOWED_USERS
+      # SECURITY: current mode is "solo yo" (owner only). To open to the team later,
+      # switch to bot mode AND set WHATSAPP_ALLOWED_USERS in .env (comma-separated
+      # numbers). Never open without an allowlist. Mode does NOT affect outbound alerts.
       text_batch_delay_seconds: 3.0       # merge rapid-fire messages into one turn
 
 display:
