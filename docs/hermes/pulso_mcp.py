@@ -73,6 +73,11 @@ CONFIRM_VIA_POSTGREST = os.environ.get("PULSO_CONFIRM_VIA_POSTGREST", "").strip(
     "true",
     "yes",
 )
+# Experiment: also download report photos locally and expose MEDIA:<path> so the
+# gateway can attach the real image (upstream WhatsApp MEDIA support is flaky —
+# hermes-agent#19105). Off by default; enable with PULSO_MEDIA_ATTACH=1 in .env.
+MEDIA_ATTACH = os.environ.get("PULSO_MEDIA_ATTACH", "").strip() in ("1", "true", "yes")
+MEDIA_DIR = Path.home() / ".hermes" / "media"
 DEMO_LAT = float(os.environ.get("PULSO_DEFAULT_LAT", "-1.05458"))   # Portoviejo centro
 DEMO_LNG = float(os.environ.get("PULSO_DEFAULT_LNG", "-80.45445"))
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -407,16 +412,39 @@ def _updated_row_count(payload: object) -> int:
     return 0
 
 
+def _download_photo(photo_url: str, incident_id: str) -> str | None:
+    """Best-effort local copy of a report photo so the gateway can attach it natively
+    via MEDIA:<path>. Cached per incident; failures only cost the attachment."""
+    try:
+        MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = Path(urllib.parse.urlparse(photo_url).path).suffix or ".jpg"
+        target = MEDIA_DIR / f"{incident_id}{suffix}"
+        if not target.exists():
+            request = urllib.request.Request(photo_url)
+            with urllib.request.urlopen(request, timeout=10) as response:
+                data = response.read(10_000_000)  # 10 MB cap
+            target.write_bytes(data)
+        return str(target)
+    except Exception as error:  # noqa: BLE001 - the link fallback still works
+        _log(f"photo download failed for {incident_id}: {error}")
+        return None
+
+
 def _enrich_incident(payload: object) -> object:
     """Flatten the RPC's single-row result and add ready-to-share URLs the agent can
     paste into WhatsApp: photo_url (public report-photos bucket) and map_url (never
-    dictate raw coordinates in text — share the link instead)."""
+    dictate raw coordinates in text — share the link instead). With PULSO_MEDIA_ATTACH,
+    also photo_media (MEDIA:<local path>) for a native image attachment."""
     row = payload[0] if isinstance(payload, list) and payload else payload
     if not isinstance(row, dict):
         return payload
     photo = row.get("photo_path")
     if isinstance(photo, str) and photo:
         row["photo_url"] = f"{SUPABASE_URL}/storage/v1/object/public/report-photos/{photo}"
+        if MEDIA_ATTACH:
+            local = _download_photo(row["photo_url"], str(row.get("id") or "incident"))
+            if local:
+                row["photo_media"] = f"MEDIA:{local}"
     lat, lng = row.get("lat"), row.get("lng")
     if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
         row["map_url"] = f"https://maps.google.com/?q={lat},{lng}"

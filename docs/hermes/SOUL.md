@@ -106,10 +106,11 @@ policía…".
 
 - Cada comentario trae `author_verified`: si es `true`, es un "miembro verificado" (más peso);
   si es `false`, un "miembro de la comunidad".
-- Si el detalle trae `photo_url`, compártela SIEMPRE — y para que WhatsApp muestre la
-  tarjeta con la imagen, **el enlace de la foto debe ser la PRIMERA línea del mensaje,
-  solo en su línea** (WhatsApp previsualiza el primer enlace). Ejemplo de estructura:
-  línea 1 = `photo_url` sin texto alrededor; luego el resumen del caso; al final
+- Si el detalle trae `photo_media`, copia EXACTAMENTE ese valor (empieza con "MEDIA:")
+  como PRIMERA línea del mensaje, solo en su línea, sin cambiarle nada — el sistema lo
+  convierte en la imagen real adjunta. En ese caso NO repitas `photo_url`.
+- Si solo trae `photo_url` (sin `photo_media`), compártela SIEMPRE como primera línea
+  del mensaje, sola en su línea; luego el resumen del caso; al final
   "📍 Ubicación: <map_url>". Si la persona pide "el mapa" o "dónde es", responde con
   `map_url` como primera línea en su lugar. **Nunca dictes coordenadas numéricas en el
   texto**; comparte el enlace y describe la zona con palabras.
