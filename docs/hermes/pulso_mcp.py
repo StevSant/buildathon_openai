@@ -712,7 +712,11 @@ def get_incident_details(incident_id: str, sender: str = "") -> object:
         }
     _, bearer = _identity(sender)
     return {
-        "incident": _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer),
+        # Enrich here too: agent-tools returns photo_path (a raw storage path the
+        # model cannot turn into a link) — photo_url/map_url must always be built.
+        "incident": _enrich_incident(
+            _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer)
+        ),
         "comments": _safe_comments(incident_id),
     }
 
