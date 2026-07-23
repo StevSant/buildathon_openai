@@ -217,7 +217,7 @@ def _identity(sender: str) -> tuple[str, str]:
 
 @mcp.tool()
 def opt_out(sender: str) -> object:
-    """Disables WhatsApp alerts and declines pending invitations for the sender."""
+    """Disables WhatsApp alerts and revokes active invitations for the sender."""
     phone = _normalize_sender(sender)
     headers = {
         "apikey": SERVICE_KEY,
@@ -252,6 +252,31 @@ def opt_out(sender: str) -> object:
         "disabled": _updated_row_count(config_rows) > 0,
         "declined_invitations": _updated_row_count(invitation_rows),
     }
+
+
+@mcp.tool()
+def accept_invitation(sender: str) -> object:
+    """Accepts pending emergency-contact invitations for the sender."""
+    phone = _normalize_sender(sender)
+    headers = {
+        "apikey": SERVICE_KEY,
+        "authorization": f"Bearer {SERVICE_KEY}",
+        "content-type": "application/json",
+        "Prefer": "return=representation",
+    }
+    query = urllib.parse.urlencode(
+        {
+            "phone_e164": f"eq.{phone}",
+            "opt_in_status": "eq.pending",
+        }
+    )
+    rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/emergency_contacts?{query}",
+        headers,
+        json.dumps({"opt_in_status": "accepted"}).encode("utf-8"),
+        method="PATCH",
+    )
+    return {"accepted_count": _updated_row_count(rows)}
 
 
 @mcp.tool()
