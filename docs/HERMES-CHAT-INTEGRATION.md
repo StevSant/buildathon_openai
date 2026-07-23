@@ -375,6 +375,17 @@ cierre #19105 o al migrar a WhatsApp Cloud API (que sí tiene mensajes de imagen
 por API; el equivalente en la app lo resuelve el frontend con la tarjeta de mapa/foto —
 commit 2e9ed97).
 
+**RESULTADO (2026-07-23): el adjunto nativo SÍ funciona.** Con `PULSO_MEDIA_ATTACH=1`
+el shim descarga la foto a `~/.hermes/media/<incident_id>.jpg` (cache por incidente,
+tope 10 MB) y expone `photo_media` = `MEDIA:<ruta local>`; SOUL la emite textual como
+primera línea y el gateway la convierte en **imagen real adjunta** en WhatsApp
+(verificado en vivo). Claves operativas: (1) el gateway solo reenvía al shim las env
+listadas en `mcp_servers.pulso.env` del config.yaml — ponerlas solo en `.env` NO basta;
+(2) los enlaces pelados NO generan tarjeta de preview con Baileys (la genera la app
+emisora), por eso el adjunto nativo es la única vía de imagen visible. Pendiente
+(backlog): miniatura de mapa por el mismo mecanismo (Google Static Maps requiere API
+key) o mensaje de ubicación nativo cuando Hermes lo exponga.
+
 ### 12.15 Demo-mode incident detail read directly (photo/map root cause) (2026-07-23)
 The `get_incident_details` RPC gates on `(select auth.uid()) is not null` (migration
 0008:80), so the shim's service-role demo reads ALWAYS returned zero rows — `photo_url`
