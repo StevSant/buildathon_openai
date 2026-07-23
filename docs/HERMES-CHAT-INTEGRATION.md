@@ -363,6 +363,39 @@ prompt. Changes:
 12. Forzar error backend (AGENT_TOOLS_URL inválida temporal) → solo mensaje amable con
     `(ref …)`; el ref aparece en `~/.hermes/logs/pulso_mcp.log`.
 
+### 12.14 Media en WhatsApp: previews de enlace, no adjuntos nativos (2026-07-23)
+Investigado el envío de la foto/mapa como imagen nativa en la respuesta del agente:
+Hermes soporta la sintaxis `MEDIA:/path` en otras plataformas pero el adaptador de
+WhatsApp aún no la maneja bien (upstream NousResearch/hermes-agent#19105 — las imágenes
+llegan como documento o no llegan; solo rutas locales, no URLs). Decisión: seguir con
+enlaces `photo_url`/`map_url` (WhatsApp genera la tarjeta de preview) y optimizar el
+formato en SOUL: **el enlace de la foto va como primera línea del mensaje, solo en su
+línea** — WhatsApp previsualiza el primer enlace del mensaje. Revisitar cuando upstream
+cierre #19105 o al migrar a WhatsApp Cloud API (que sí tiene mensajes de imagen nativos
+por API; el equivalente en la app lo resuelve el frontend con la tarjeta de mapa/foto —
+commit 2e9ed97).
+
+**RESULTADO (2026-07-23): el adjunto nativo SÍ funciona.** Con `PULSO_MEDIA_ATTACH=1`
+el shim descarga la foto a `~/.hermes/media/<incident_id>.jpg` (cache por incidente,
+tope 10 MB) y expone `photo_media` = `MEDIA:<ruta local>`; SOUL la emite textual como
+primera línea y el gateway la convierte en **imagen real adjunta** en WhatsApp
+(verificado en vivo). Claves operativas: (1) el gateway solo reenvía al shim las env
+listadas en `mcp_servers.pulso.env` del config.yaml — ponerlas solo en `.env` NO basta;
+(2) los enlaces pelados NO generan tarjeta de preview con Baileys (la genera la app
+emisora), por eso el adjunto nativo es la única vía de imagen visible. Pendiente
+(backlog): miniatura de mapa por el mismo mecanismo (Google Static Maps requiere API
+key) o mensaje de ubicación nativo cuando Hermes lo exponga.
+
+### 12.15 Demo-mode incident detail read directly (photo/map root cause) (2026-07-23)
+The `get_incident_details` RPC gates on `(select auth.uid()) is not null` (migration
+0008:80), so the shim's service-role demo reads ALWAYS returned zero rows — `photo_url`
+and `map_url` could never surface, masked until now by the comments (read directly since
+§12.2) filling the reply. Fix: `_safe_incident_detail` reads `public.incidents` directly
+with the service role (public-safe fields only, never `reporter_id`; coordinates via the
+`application/geo+json` accept header — same pattern as `_resolve_alert_center`), then
+`_enrich_incident` builds `photo_url`/`map_url` as before. The frozen RPC is untouched —
+the app keeps using it with real user JWTs.
+
 **Addendum 12.4 (2026-07-23) — LID aliases:** modern WhatsApp accounts reach the gateway
 as a privacy alias (`<lid>@lid`), not the phone JID, so the raw `user_id` cannot be used
 for identity. The gateway hook now resolves the alias through Baileys' on-disk mapping

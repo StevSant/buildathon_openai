@@ -73,6 +73,11 @@ CONFIRM_VIA_POSTGREST = os.environ.get("PULSO_CONFIRM_VIA_POSTGREST", "").strip(
     "true",
     "yes",
 )
+# Experiment: also download report photos locally and expose MEDIA:<path> so the
+# gateway can attach the real image (upstream WhatsApp MEDIA support is flaky —
+# hermes-agent#19105). Off by default; enable with PULSO_MEDIA_ATTACH=1 in .env.
+MEDIA_ATTACH = os.environ.get("PULSO_MEDIA_ATTACH", "").strip() in ("1", "true", "yes")
+MEDIA_DIR = Path.home() / ".hermes" / "media"
 DEMO_LAT = float(os.environ.get("PULSO_DEFAULT_LAT", "-1.05458"))   # Portoviejo centro
 DEMO_LNG = float(os.environ.get("PULSO_DEFAULT_LNG", "-80.45445"))
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -407,19 +412,74 @@ def _updated_row_count(payload: object) -> int:
     return 0
 
 
+def _download_photo(photo_url: str, incident_id: str) -> str | None:
+    """Best-effort local copy of a report photo so the gateway can attach it natively
+    via MEDIA:<path>. Cached per incident; failures only cost the attachment."""
+    try:
+        MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = Path(urllib.parse.urlparse(photo_url).path).suffix or ".jpg"
+        target = MEDIA_DIR / f"{incident_id}{suffix}"
+        if not target.exists():
+            request = urllib.request.Request(photo_url)
+            with urllib.request.urlopen(request, timeout=10) as response:
+                data = response.read(10_000_000)  # 10 MB cap
+            target.write_bytes(data)
+        return str(target)
+    except Exception as error:  # noqa: BLE001 - the link fallback still works
+        _log(f"photo download failed for {incident_id}: {error}")
+        return None
+
+
 def _enrich_incident(payload: object) -> object:
     """Flatten the RPC's single-row result and add ready-to-share URLs the agent can
     paste into WhatsApp: photo_url (public report-photos bucket) and map_url (never
-    dictate raw coordinates in text — share the link instead)."""
+    dictate raw coordinates in text — share the link instead). With PULSO_MEDIA_ATTACH,
+    also photo_media (MEDIA:<local path>) for a native image attachment."""
     row = payload[0] if isinstance(payload, list) and payload else payload
     if not isinstance(row, dict):
         return payload
     photo = row.get("photo_path")
     if isinstance(photo, str) and photo:
         row["photo_url"] = f"{SUPABASE_URL}/storage/v1/object/public/report-photos/{photo}"
+        if MEDIA_ATTACH:
+            local = _download_photo(row["photo_url"], str(row.get("id") or "incident"))
+            if local:
+                row["photo_media"] = f"MEDIA:{local}"
     lat, lng = row.get("lat"), row.get("lng")
     if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
         row["map_url"] = f"https://maps.google.com/?q={lat},{lng}"
+    return row
+
+
+def _safe_incident_detail(incident_id: str) -> object:
+    """One incident's public-safe fields read directly with the service role.
+    The get_incident_details RPC gates on auth.uid() (migration 0008), so the shim's
+    service-role demo reads always got ZERO rows — photo/map never surfaced. Same
+    pattern as _safe_comments: direct table read, never selecting reporter_id. The
+    GeoJSON accept header yields the point's coordinates for map_url."""
+    query = urllib.parse.urlencode(
+        {
+            "id": f"eq.{incident_id}",
+            "select": "id,title,description,category,severity,status,confirmations,"
+            "created_at,expires_at,photo_path,location",
+        }
+    )
+    document = _request_json(
+        f"{SUPABASE_URL}/rest/v1/incidents?{query}",
+        {
+            "apikey": SERVICE_KEY,
+            "authorization": f"Bearer {SERVICE_KEY}",
+            "accept": "application/geo+json",
+        },
+    )
+    features = document.get("features") if isinstance(document, dict) else None
+    if not isinstance(features, list) or not features or not isinstance(features[0], dict):
+        return []
+    row = dict(features[0].get("properties") or {})
+    geometry = features[0].get("geometry")
+    coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+    if isinstance(coordinates, list) and len(coordinates) == 2:
+        row["lng"], row["lat"] = coordinates  # GeoJSON order is [lng, lat]
     return row
 
 
@@ -672,13 +732,19 @@ def get_incident_details(incident_id: str, sender: str = "") -> object:
     summarize what neighbors report, note if the author is a verified member."""
     incident_id = _require_uuid(incident_id)
     if DEMO_MODE:
+        # NOT the RPC: it gates on auth.uid() and returns zero rows for service-role
+        # callers (see _safe_incident_detail) — read the table directly instead.
         return {
-            "incident": _enrich_incident(_rpc_service("get_incident_details", {"target_id": incident_id})),
+            "incident": _enrich_incident(_safe_incident_detail(incident_id)),
             "comments": _safe_comments(incident_id),
         }
     _, bearer = _identity(sender)
     return {
-        "incident": _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer),
+        # Enrich here too: agent-tools returns photo_path (a raw storage path the
+        # model cannot turn into a link) — photo_url/map_url must always be built.
+        "incident": _enrich_incident(
+            _call_agent_tools("get_incident_details", {"incident_id": incident_id}, bearer)
+        ),
         "comments": _safe_comments(incident_id),
     }
 
