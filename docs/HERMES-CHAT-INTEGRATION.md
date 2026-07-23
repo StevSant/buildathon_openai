@@ -284,3 +284,11 @@ confirms truthfully.
 Issue #22 (place-based geocoding via Nominatim for `get_nearby_incidents`), issue #24
 (`accept_invitation` — unblocks SOS delivery to contacts), and the incidents-INSERT
 Database Webhook wiring (ops, Dashboard).
+
+**Addendum 12.4 (2026-07-23) — LID aliases:** modern WhatsApp accounts reach the gateway
+as a privacy alias (`<lid>@lid`), not the phone JID, so the raw `user_id` cannot be used
+for identity. The gateway hook now resolves the alias through Baileys' on-disk mapping
+(`~/.hermes/whatsapp/session/lid-mapping-<lid>_reverse.json`; the linked account's own
+pair also lives in `creds.json` under `me.id`/`me.lid`). Additionally, the shim matches
+`phone_e164` stored with or without the leading `+` (or-filter) so registration format
+differences can never break identity resolution.
