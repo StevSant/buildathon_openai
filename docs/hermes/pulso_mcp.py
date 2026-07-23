@@ -62,8 +62,18 @@ def _mint_user_jwt(user_id: str) -> str:
     )
 
 
-def _request_json(url: str, headers: dict[str, str], data: bytes | None = None) -> object:
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+def _request_json(
+    url: str,
+    headers: dict[str, str],
+    data: bytes | None = None,
+    method: str | None = None,
+) -> object:
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=headers,
+        method=method or ("POST" if data else "GET"),
+    )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -72,6 +82,14 @@ def _request_json(url: str, headers: dict[str, str], data: bytes | None = None) 
         raise ValueError(f"Pulso no pudo completar la consulta ({error.code}): {detail}") from error
     except urllib.error.URLError as error:
         raise ValueError("No pude conectar con Pulso en este momento.") from error
+
+
+def _updated_row_count(payload: object) -> int:
+    if isinstance(payload, list):
+        return len(payload)
+    if isinstance(payload, dict):
+        return 1
+    return 0
 
 
 def _rpc_service(name: str, args: dict[str, object]) -> object:
@@ -195,6 +213,45 @@ def _call_agent_tools(tool: str, arguments: dict[str, object], bearer: str) -> o
 def _identity(sender: str) -> tuple[str, str]:
     user_id = _resolve_user_id(sender)
     return user_id, _mint_user_jwt(user_id)
+
+
+@mcp.tool()
+def opt_out(sender: str) -> object:
+    """Disables WhatsApp alerts and declines pending invitations for the sender."""
+    phone = _normalize_sender(sender)
+    headers = {
+        "apikey": SERVICE_KEY,
+        "authorization": f"Bearer {SERVICE_KEY}",
+        "content-type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    config_query = urllib.parse.urlencode({"phone_e164": f"eq.{phone}"})
+    config_rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/whatsapp_config?{config_query}",
+        headers,
+        json.dumps({"enabled": False}).encode("utf-8"),
+        method="PATCH",
+    )
+
+    invitation_query = urllib.parse.urlencode(
+        {
+            "phone_e164": f"eq.{phone}",
+            # BAJA must stop future SOS alerts too: decline pending AND accepted.
+            "opt_in_status": "neq.declined",
+        }
+    )
+    invitation_rows = _request_json(
+        f"{SUPABASE_URL}/rest/v1/emergency_contacts?{invitation_query}",
+        headers,
+        json.dumps({"opt_in_status": "declined"}).encode("utf-8"),
+        method="PATCH",
+    )
+
+    return {
+        "disabled": _updated_row_count(config_rows) > 0,
+        "declined_invitations": _updated_row_count(invitation_rows),
+    }
 
 
 @mcp.tool()
