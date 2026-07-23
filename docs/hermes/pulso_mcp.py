@@ -423,6 +423,38 @@ def _enrich_incident(payload: object) -> object:
     return row
 
 
+def _safe_incident_detail(incident_id: str) -> object:
+    """One incident's public-safe fields read directly with the service role.
+    The get_incident_details RPC gates on auth.uid() (migration 0008), so the shim's
+    service-role demo reads always got ZERO rows — photo/map never surfaced. Same
+    pattern as _safe_comments: direct table read, never selecting reporter_id. The
+    GeoJSON accept header yields the point's coordinates for map_url."""
+    query = urllib.parse.urlencode(
+        {
+            "id": f"eq.{incident_id}",
+            "select": "id,title,description,category,severity,status,confirmations,"
+            "created_at,expires_at,photo_path,location",
+        }
+    )
+    document = _request_json(
+        f"{SUPABASE_URL}/rest/v1/incidents?{query}",
+        {
+            "apikey": SERVICE_KEY,
+            "authorization": f"Bearer {SERVICE_KEY}",
+            "accept": "application/geo+json",
+        },
+    )
+    features = document.get("features") if isinstance(document, dict) else None
+    if not isinstance(features, list) or not features or not isinstance(features[0], dict):
+        return []
+    row = dict(features[0].get("properties") or {})
+    geometry = features[0].get("geometry")
+    coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+    if isinstance(coordinates, list) and len(coordinates) == 2:
+        row["lng"], row["lat"] = coordinates  # GeoJSON order is [lng, lat]
+    return row
+
+
 def _safe_comments(incident_id: str) -> object:
     """Community comments for an incident, anonymous shape (id, body, created_at,
     author_verified). Read directly with the service role: the get_incident_comments RPC
@@ -672,8 +704,10 @@ def get_incident_details(incident_id: str, sender: str = "") -> object:
     summarize what neighbors report, note if the author is a verified member."""
     incident_id = _require_uuid(incident_id)
     if DEMO_MODE:
+        # NOT the RPC: it gates on auth.uid() and returns zero rows for service-role
+        # callers (see _safe_incident_detail) — read the table directly instead.
         return {
-            "incident": _enrich_incident(_rpc_service("get_incident_details", {"target_id": incident_id})),
+            "incident": _enrich_incident(_safe_incident_detail(incident_id)),
             "comments": _safe_comments(incident_id),
         }
     _, bearer = _identity(sender)

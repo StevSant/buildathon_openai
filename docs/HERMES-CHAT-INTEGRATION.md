@@ -375,6 +375,16 @@ cierre #19105 o al migrar a WhatsApp Cloud API (que sí tiene mensajes de imagen
 por API; el equivalente en la app lo resuelve el frontend con la tarjeta de mapa/foto —
 commit 2e9ed97).
 
+### 12.15 Demo-mode incident detail read directly (photo/map root cause) (2026-07-23)
+The `get_incident_details` RPC gates on `(select auth.uid()) is not null` (migration
+0008:80), so the shim's service-role demo reads ALWAYS returned zero rows — `photo_url`
+and `map_url` could never surface, masked until now by the comments (read directly since
+§12.2) filling the reply. Fix: `_safe_incident_detail` reads `public.incidents` directly
+with the service role (public-safe fields only, never `reporter_id`; coordinates via the
+`application/geo+json` accept header — same pattern as `_resolve_alert_center`), then
+`_enrich_incident` builds `photo_url`/`map_url` as before. The frozen RPC is untouched —
+the app keeps using it with real user JWTs.
+
 **Addendum 12.4 (2026-07-23) — LID aliases:** modern WhatsApp accounts reach the gateway
 as a privacy alias (`<lid>@lid`), not the phone JID, so the raw `user_id` cannot be used
 for identity. The gateway hook now resolves the alias through Baileys' on-disk mapping
