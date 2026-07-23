@@ -33,7 +33,9 @@ DEMO_LAT = float(os.environ.get("PULSO_DEFAULT_LAT", "-1.05458"))   # Portoviejo
 DEMO_LNG = float(os.environ.get("PULSO_DEFAULT_LNG", "-80.45445"))
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_USER_AGENT = "pulso-demo/1.0"
-PORTOVIEJO_VIEWBOX = "-80.50,-1.00,-80.40,-1.10"
+# Manabí-wide bias (west,north,east,south): covers Portoviejo, Manta and surroundings,
+# so asking about another Manabí city resolves THERE instead of silently failing.
+MANABI_VIEWBOX = "-80.95,-0.75,-80.25,-1.35"
 
 mcp = FastMCP("pulso")
 
@@ -94,10 +96,10 @@ def _geocode(place: str) -> tuple[float, float] | None:
         return None
     query = urllib.parse.urlencode(
         {
-            "q": f"{place.strip()}, Portoviejo, Ecuador",
+            "q": f"{place.strip()}, Manabí, Ecuador",
             "format": "json",
             "limit": "1",
-            "viewbox": PORTOVIEJO_VIEWBOX,
+            "viewbox": MANABI_VIEWBOX,
         }
     )
     request = urllib.request.Request(
@@ -356,18 +358,30 @@ def get_nearby_incidents(
     else:
         raise ValueError("Debes proporcionar latitud y longitud válidas juntas.")
 
+    # Honest failure: never silently answer from the default center when the user
+    # asked about a specific place we could not locate.
+    if place and resolved is None:
+        raise ValueError(
+            "No pude ubicar ese lugar. Prueba con otra referencia conocida "
+            "(un parque, avenida, barrio o ciudad de Manabí)."
+        )
+
     if DEMO_MODE:
         query_lat, query_lng = resolved or (DEMO_LAT, DEMO_LNG)
-        _log("demo mode: nearby incidents via service role")
-        return _rpc_service(
-            "get_nearby_incidents",
-            {
-                "user_lat": query_lat,
-                "user_long": query_lng,
-                "radius_meters": radius_meters,
-                "filter_category": filter_category,
-            },
-        )
+        source = "place" if place else ("coordinates" if resolved else "default_center")
+        _log(f"demo mode: nearby incidents via service role ({source})")
+        return {
+            "queried_around": {"source": source, "place": place or None},
+            "incidents": _rpc_service(
+                "get_nearby_incidents",
+                {
+                    "user_lat": query_lat,
+                    "user_long": query_lng,
+                    "radius_meters": radius_meters,
+                    "filter_category": filter_category,
+                },
+            ),
+        }
     user_id, bearer = _identity(sender)
     if resolved is None:
         try:
