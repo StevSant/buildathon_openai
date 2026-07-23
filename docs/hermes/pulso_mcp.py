@@ -157,9 +157,17 @@ def _safe_comments(incident_id: str) -> object:
         return []
 
 
+def _phone_match_filter(phone: str) -> str:
+    """PostgREST or-filter matching phone_e164 stored with or without the leading '+'."""
+    digits = phone.lstrip("+")
+    return f"(phone_e164.eq.+{digits},phone_e164.eq.{digits})"
+
+
 def _resolve_user_id(sender: str) -> str:
     phone = _normalize_sender(sender)
-    query = urllib.parse.urlencode({"select": "user_id", "phone_e164": f"eq.{phone}", "limit": "1"})
+    query = urllib.parse.urlencode(
+        {"select": "user_id", "or": _phone_match_filter(phone), "limit": "1"}
+    )
     rows = _request_json(
         f"{SUPABASE_URL}/rest/v1/whatsapp_config?{query}",
         {"apikey": SERVICE_KEY, "authorization": f"Bearer {SERVICE_KEY}"},
@@ -226,7 +234,7 @@ def opt_out(sender: str) -> object:
         "Prefer": "return=representation",
     }
 
-    config_query = urllib.parse.urlencode({"phone_e164": f"eq.{phone}"})
+    config_query = urllib.parse.urlencode({"or": _phone_match_filter(phone)})
     config_rows = _request_json(
         f"{SUPABASE_URL}/rest/v1/whatsapp_config?{config_query}",
         headers,
@@ -236,7 +244,7 @@ def opt_out(sender: str) -> object:
 
     invitation_query = urllib.parse.urlencode(
         {
-            "phone_e164": f"eq.{phone}",
+            "or": _phone_match_filter(phone),
             # BAJA must stop future SOS alerts too: decline pending AND accepted.
             "opt_in_status": "neq.declined",
         }
@@ -266,7 +274,7 @@ def accept_invitation(sender: str) -> object:
     }
     query = urllib.parse.urlencode(
         {
-            "phone_e164": f"eq.{phone}",
+            "or": _phone_match_filter(phone),
             "opt_in_status": "eq.pending",
         }
     )
