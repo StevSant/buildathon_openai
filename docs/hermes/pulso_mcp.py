@@ -87,6 +87,22 @@ def _rpc_service(name: str, args: dict[str, object]) -> object:
     )
 
 
+def _enrich_incident(payload: object) -> object:
+    """Flatten the RPC's single-row result and add ready-to-share URLs the agent can
+    paste into WhatsApp: photo_url (public report-photos bucket) and map_url (never
+    dictate raw coordinates in text — share the link instead)."""
+    row = payload[0] if isinstance(payload, list) and payload else payload
+    if not isinstance(row, dict):
+        return payload
+    photo = row.get("photo_path")
+    if isinstance(photo, str) and photo:
+        row["photo_url"] = f"{SUPABASE_URL}/storage/v1/object/public/report-photos/{photo}"
+    lat, lng = row.get("lat"), row.get("lng")
+    if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+        row["map_url"] = f"https://maps.google.com/?q={lat},{lng}"
+    return row
+
+
 def _safe_comments(incident_id: str) -> object:
     """Community comments for an incident, anonymous shape (id, body, created_at,
     author_verified). Read directly with the service role: the get_incident_comments RPC
@@ -219,7 +235,7 @@ def get_incident_details(incident_id: str, sender: str = "") -> object:
     summarize what neighbors report, note if the author is a verified member."""
     if DEMO_MODE:
         return {
-            "incident": _rpc_service("get_incident_details", {"target_id": incident_id}),
+            "incident": _enrich_incident(_rpc_service("get_incident_details", {"target_id": incident_id})),
             "comments": _safe_comments(incident_id),
         }
     _, bearer = _identity(sender)
