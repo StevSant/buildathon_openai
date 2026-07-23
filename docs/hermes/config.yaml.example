@@ -56,3 +56,17 @@ platforms:
 display:
   language: es
   interim_assistant_messages: true        # send mid-turn "typing…"-style updates
+  platforms:
+    whatsapp:
+      tool_progress: "log"                # hide "⌇ tool..." bubbles in chat; audit to
+                                          # ~/.hermes/logs/tool_calls.log ("off" = no audit)
+
+# ── Sender-identity hooks (docs/hermes/hooks/ + docs/hermes/agent-hooks/) ────────
+# Hermes never exposes the WhatsApp phone to the model (upstream gap #35147), so a
+# gateway hook caches session→sender and this pre_llm_call shell hook injects it
+# each turn for the tools' `sender` argument. Requires `jq` on the VM.
+hooks:
+  pre_llm_call:
+    - command: "/home/azureuser/.hermes/agent-hooks/inject-sender.sh"
+      timeout: 5
+hooks_auto_accept: true                   # gateway is non-TTY; hooks must auto-register
