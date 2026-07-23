@@ -28,6 +28,10 @@ mcp_servers:
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      # IMPORTANT: the gateway only forwards the vars listed HERE to the shim —
+      # adding them to ~/.hermes/.env alone is NOT enough.
+      PULSO_DEMO_MODE: "1"        # service-role reads around the demo center
+      PULSO_MEDIA_ATTACH: "1"     # download report photos + emit MEDIA:<path> attachments
 
 # ── CRITICAL SECURITY: allowlist tools per platform (inclusive model) ────────────
 # Hermes controls tools INCLUSIVELY — a platform only gets the toolsets you assign.
