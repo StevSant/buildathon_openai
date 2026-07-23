@@ -363,6 +363,18 @@ prompt. Changes:
 12. Forzar error backend (AGENT_TOOLS_URL inválida temporal) → solo mensaje amable con
     `(ref …)`; el ref aparece en `~/.hermes/logs/pulso_mcp.log`.
 
+### 12.14 Media en WhatsApp: previews de enlace, no adjuntos nativos (2026-07-23)
+Investigado el envío de la foto/mapa como imagen nativa en la respuesta del agente:
+Hermes soporta la sintaxis `MEDIA:/path` en otras plataformas pero el adaptador de
+WhatsApp aún no la maneja bien (upstream NousResearch/hermes-agent#19105 — las imágenes
+llegan como documento o no llegan; solo rutas locales, no URLs). Decisión: seguir con
+enlaces `photo_url`/`map_url` (WhatsApp genera la tarjeta de preview) y optimizar el
+formato en SOUL: **el enlace de la foto va como primera línea del mensaje, solo en su
+línea** — WhatsApp previsualiza el primer enlace del mensaje. Revisitar cuando upstream
+cierre #19105 o al migrar a WhatsApp Cloud API (que sí tiene mensajes de imagen nativos
+por API; el equivalente en la app lo resuelve el frontend con la tarjeta de mapa/foto —
+commit 2e9ed97).
+
 **Addendum 12.4 (2026-07-23) — LID aliases:** modern WhatsApp accounts reach the gateway
 as a privacy alias (`<lid>@lid`), not the phone JID, so the raw `user_id` cannot be used
 for identity. The gateway hook now resolves the alias through Baileys' on-disk mapping

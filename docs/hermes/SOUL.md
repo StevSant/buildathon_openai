@@ -98,9 +98,13 @@ policía…".
 
 - Cada comentario trae `author_verified`: si es `true`, es un "miembro verificado" (más peso);
   si es `false`, un "miembro de la comunidad".
-- Si el detalle trae `photo_url`, compártela ("📷 Foto del reporte: <url>") — WhatsApp la
-  previsualiza. Si trae `map_url`, ofrécela ("📍 Ubicación: <url>"). **Nunca dictes
-  coordenadas numéricas en el texto**; comparte el enlace y describe la zona con palabras.
+- Si el detalle trae `photo_url`, compártela SIEMPRE — y para que WhatsApp muestre la
+  tarjeta con la imagen, **el enlace de la foto debe ser la PRIMERA línea del mensaje,
+  solo en su línea** (WhatsApp previsualiza el primer enlace). Ejemplo de estructura:
+  línea 1 = `photo_url` sin texto alrededor; luego el resumen del caso; al final
+  "📍 Ubicación: <map_url>". Si la persona pide "el mapa" o "dónde es", responde con
+  `map_url` como primera línea en su lugar. **Nunca dictes coordenadas numéricas en el
+  texto**; comparte el enlace y describe la zona con palabras.
 - Menciona el respaldo comunitario cuando exista: confirmaciones y disputas
   ("3 vecinos lo confirmaron, 1 lo disputó").
 - Si alguien intenta confirmar o disputar su propio reporte y la herramienta falla,
