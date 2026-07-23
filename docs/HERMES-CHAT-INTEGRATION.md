@@ -223,3 +223,64 @@ The Hermes integration now includes these repository changes:
   (safe, resilient cities) and ODS 13 (risk response) for Manabí.
 - **Ejecución técnica (20):** the hexagonal seam holds — Hermes slots behind the existing
   `MessagingGateway` port; the tool layer is reused, not rebuilt.
+
+## 12. Post-demo implementation log (2026-07-21)
+
+Implemented after the Buildathon presentation, during the improvement phase. Each entry
+records what was built, why, and what to revisit on migration.
+
+### 12.1 Demo mode in the MCP shim (`PULSO_DEMO_MODE=1`)
+Reads (`get_nearby_incidents`, `get_incident_details`) call the PostGIS RPCs directly with
+the service role around the venue center (`PULSO_DEFAULT_LAT/LNG`, Portoviejo centro).
+**Why:** at demo time the WhatsApp sender never reached the tools and
+`whatsapp_config`/`alert_rules` were unseeded. **Migration:** once real users register and
+the sender hooks (12.4) are live, set `PULSO_DEMO_MODE=0` to restore the per-user path
+(`agent-tools` + minted JWT + personal alert zone).
+
+### 12.2 Community comments read directly (not via RPC)
+The shim reads `public.incident_comments` through PostgREST with the service role,
+selecting only anonymous fields (`id, body, created_at, author:profiles(verified)`).
+**Why:** `get_incident_comments` gates reads on `auth.uid() is not null`; the shim has no
+end-user JWT. The RPC remains the correct path for the app. **Note:** this bypasses the
+RPC's resolved/expired filter — acceptable because the shim only fetches comments for
+incidents it just surfaced.
+
+### 12.3 Incident-detail enrichment
+`get_incident_details` returns `{incident, comments}`; `incident` gains `photo_url`
+(public `report-photos` bucket URL) and `map_url` (Google Maps link). `SOUL.md` instructs
+Cerca to share those links, cite community backing ("3 confirmaron, 1 disputó"), and never
+dictate raw coordinates in text.
+
+### 12.4 Sender-identity hooks (core fix)
+Hermes upstream never exposes the WhatsApp phone number to the model — the session
+context prefers the contact's push-name (upstream issues NousResearch/hermes-agent#35147,
+#38978) — so every tool with a `sender` argument received an empty value.
+**Fix:** `docs/hermes/hooks/pulso-sender/` (gateway hook on `session:start` +
+`agent:start` caches session→`+phone` under `~/.hermes/state/pulso-sender/`) plus
+`docs/hermes/agent-hooks/inject-sender.sh` (`pre_llm_call` shell hook injects
+`[Remitente WhatsApp verificado por el sistema: +…]` each turn). Registered via the
+`hooks:` block + `hooks_auto_accept: true` in `config.yaml`; requires `jq` on the VM.
+**Migration:** delete both hooks when (a) Hermes ships native sender exposure (track
+#35147) or (b) WhatsApp moves to the Cloud API webhook, which carries the sender natively.
+
+### 12.5 `opt_out` tool — "BAJA" honored (issue #23)
+New shim tool `opt_out(sender)`: disables `whatsapp_config.enabled` and declines
+`emergency_contacts` invitations — pending AND accepted, since an accepted contact saying
+BAJA must also stop receiving SOS. Returns `{disabled, declined_invitations}` so Cerca
+confirms truthfully.
+
+### 12.6 VM configuration notes (operational)
+- `mcp_servers.pulso.command` must point at the venv python
+  `/home/azureuser/.hermes/mcp-venv/bin/python` (has `mcp[cli]` + `pyjwt`).
+- The webhook platform is enabled via config.yaml `platforms.webhook.enabled: true`
+  (a `.env`-only `WEBHOOK_ENABLED` is not reliably picked up by `hermes gateway restart`).
+- `display.platforms.whatsapp.tool_progress: "log"` hides the "⌇ tool…" bubbles in chat
+  and audits every call to `~/.hermes/logs/tool_calls.log`.
+- Deploy recipe: scp `docs/hermes/{SOUL.md,pulso_mcp.py}`, `docs/hermes/hooks/`,
+  `docs/hermes/agent-hooks/` into `~/.hermes/…`, `sudo apt install -y jq`,
+  `hermes gateway restart`.
+
+### 12.7 In flight
+Issue #22 (place-based geocoding via Nominatim for `get_nearby_incidents`), issue #24
+(`accept_invitation` — unblocks SOS delivery to contacts), and the incidents-INSERT
+Database Webhook wiring (ops, Dashboard).
